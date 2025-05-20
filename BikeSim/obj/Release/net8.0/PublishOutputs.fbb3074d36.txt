@@ -1,0 +1,5 @@
+C:\Users\raulj\ServidorSim3\bin\Release\net8.0\publish\BikeSim.exe
+C:\Users\raulj\ServidorSim3\bin\Release\net8.0\publish\BikeSim.dll
+C:\Users\raulj\ServidorSim3\bin\Release\net8.0\publish\BikeSim.deps.json
+C:\Users\raulj\ServidorSim3\bin\Release\net8.0\publish\BikeSim.runtimeconfig.json
+C:\Users\raulj\ServidorSim3\bin\Release\net8.0\publish\BikeSim.pdb
