@@ -3,6 +3,7 @@ version: '3.8'
 services:
   timescaledb:
     image: timescale/timescaledb-ha:pg16
+    hostname: timescaledb
     container_name: timescaledb
     environment:
       POSTGRES_DB: quantumleap
@@ -12,6 +13,8 @@ services:
       - "5432:5432"
     volumes:
       - timescale-data:/var/lib/postgresql/data
+    healthcheck:
+        test: curl --fail -s http://timescaledb:5432/version || exit 1
 
   orion:
     image: fiware/orion-ld:1.0.1
@@ -38,9 +41,12 @@ services:
     networks:
         - default
     command: --nojournal
+    healthcheck:
+        test: curl --fail -s http://mongo-db:27017/version || exit 1
 
   quantumleap:
     image: orchestracities/quantumleap:latest
+    hostname: quantumleap
     container_name: quantumleap
     ports:
       - "8668:8668"
@@ -53,10 +59,13 @@ services:
       - POSTGRES_USE_SSL=false
       - QL_DEFAULT_DB=timescale 
     depends_on:
-      - timescaledb 
+      - timescaledb
+    healthcheck:
+        test: curl --fail -s http://quantumleap:8668/version || exit 1
   
   grafana:
     image: grafana/grafana:latest
+    hostname: grafana
     container_name: grafana
     ports:
       - "9095:3000"
@@ -71,33 +80,8 @@ services:
       - GF_AUTH_ANONYMOUS_ORG_ROLE=Viewer
       - GF_INSTALL_PLUGINS=yesoreyeram-boomtheme-panel
     restart: unless-stopped
-  
-  perseo-core:
-    image: fiware/perseo-core:latest
-    container_name: perseo-core
-    ports:
-      - "8080:8080"
-    environment:
-      - PERSEO_FE_URL=http://perseo-fe:9090
-    depends_on:
-      - mongo-db
-
-  perseo-fe:
-    image: fiware/perseo-fe:latest
-    container_name: perseo-fe
-    ports:
-      - 9090:9090
-    depends_on:
-      - perseo-core
-    environment:
-      - PERSEO_MONGO_ENDPOINT=mongo-db
-      - PERSEO_CORE_URL=http://perseo-core:8080
-      - PERSEO_LOG_LEVEL=debug
-      - PERSEO_ORION_URL=http://orion:1026/
-      - PERSEO_SMTP_HOST=smtp.gmail.com
-      - PERSEO_SMTP_PORT=587
-      - PERSEO_SMTP_AUTH_USER=raulouyyyyyygameplays@gmail.com
-      - PERSEO_SMTP_AUTH_PASS=vwfi gsae pfpc xszr 
+    healthcheck:
+        test: curl --fail -s http://grafana:9095/version || exit 1
   
 volumes:
   timescale-data:

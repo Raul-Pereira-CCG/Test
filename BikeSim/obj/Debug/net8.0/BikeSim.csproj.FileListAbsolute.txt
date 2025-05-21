@@ -26,17 +26,3 @@ C:\Users\raulj\ServidorSim\obj\Debug\net8.0\refint\BikeSim.dll
 C:\Users\raulj\ServidorSim\obj\Debug\net8.0\BikeSim.pdb
 C:\Users\raulj\ServidorSim\obj\Debug\net8.0\BikeSim.genruntimeconfig.cache
 C:\Users\raulj\ServidorSim\obj\Debug\net8.0\ref\BikeSim.dll
-C:\Users\raulj\ServidorSim2\bin\Debug\net8.0\BikeSim.exe
-C:\Users\raulj\ServidorSim2\bin\Debug\net8.0\BikeSim.deps.json
-C:\Users\raulj\ServidorSim2\bin\Debug\net8.0\BikeSim.runtimeconfig.json
-C:\Users\raulj\ServidorSim2\bin\Debug\net8.0\BikeSim.dll
-C:\Users\raulj\ServidorSim2\bin\Debug\net8.0\BikeSim.pdb
-C:\Users\raulj\ServidorSim2\obj\Debug\net8.0\BikeSim.GeneratedMSBuildEditorConfig.editorconfig
-C:\Users\raulj\ServidorSim2\obj\Debug\net8.0\BikeSim.AssemblyInfoInputs.cache
-C:\Users\raulj\ServidorSim2\obj\Debug\net8.0\BikeSim.AssemblyInfo.cs
-C:\Users\raulj\ServidorSim2\obj\Debug\net8.0\BikeSim.csproj.CoreCompileInputs.cache
-C:\Users\raulj\ServidorSim2\obj\Debug\net8.0\BikeSim.dll
-C:\Users\raulj\ServidorSim2\obj\Debug\net8.0\refint\BikeSim.dll
-C:\Users\raulj\ServidorSim2\obj\Debug\net8.0\BikeSim.pdb
-C:\Users\raulj\ServidorSim2\obj\Debug\net8.0\BikeSim.genruntimeconfig.cache
-C:\Users\raulj\ServidorSim2\obj\Debug\net8.0\ref\BikeSim.dll

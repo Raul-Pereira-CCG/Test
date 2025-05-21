@@ -1,17 +1,17 @@
 {
   "format": 1,
   "restore": {
-    "C:\\Users\\raulj\\ServidorSim3\\BikeSim.csproj": {}
+    "C:\\Users\\raulj\\ServidorSim\\BikeSim.csproj": {}
   },
   "projects": {
-    "C:\\Users\\raulj\\ServidorSim3\\BikeSim.csproj": {
+    "C:\\Users\\raulj\\ServidorSim\\BikeSim.csproj": {
       "version": "1.0.0",
       "restore": {
-        "projectUniqueName": "C:\\Users\\raulj\\ServidorSim3\\BikeSim.csproj",
+        "projectUniqueName": "C:\\Users\\raulj\\ServidorSim\\BikeSim.csproj",
         "projectName": "BikeSim",
-        "projectPath": "C:\\Users\\raulj\\ServidorSim3\\BikeSim.csproj",
+        "projectPath": "C:\\Users\\raulj\\ServidorSim\\BikeSim.csproj",
         "packagesPath": "C:\\Users\\raulj\\.nuget\\packages\\",
-        "outputPath": "C:\\Users\\raulj\\ServidorSim3\\obj\\",
+        "outputPath": "C:\\Users\\raulj\\ServidorSim\\obj\\",
         "projectStyle": "PackageReference",
         "configFilePaths": [
           "C:\\Users\\raulj\\AppData\\Roaming\\NuGet\\NuGet.Config"

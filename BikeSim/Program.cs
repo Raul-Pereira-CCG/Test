@@ -17,20 +17,31 @@ class Program
     static Dictionary<string, List<double[]>> bikeRoutes = new Dictionary<string, List<double[]>>();
     static Dictionary<string, int> bikeRoutePositions = new Dictionary<string, int>();
     static Dictionary<string, bool> bikeRouteCompleted = new Dictionary<string, bool>();
-    static Dictionary<string, int> bikeRoutesCompletedToday = new Dictionary<string, int>();
-    static Dictionary<string, double[]> bikeLastPosition = new Dictionary<string, double[]>();
-    static Dictionary<string, DateTime> bikeNextActivityTime = new Dictionary<string, DateTime>();
-    static bool isRunning = true;
+    static double[][] portoPolygon = new double[][]
+    {
+        new double[] {-8.689051, 41.173113},
+        new double[] {-8.675078, 41.147266},
+        new double[] {-8.633337, 41.147179},
+        new double[] {-8.616012, 41.140305},
+        new double[] {-8.590393, 41.139868},
+        new double[] {-8.572156, 41.153743},
+        new double[] {-8.566115, 41.175561},
+        new double[] {-8.608054, 41.184668},
+        new double[] {-8.689051, 41.173113}
+    };
+    static Random random = new Random();
+    static bool stopRequested = false;
 
     static async Task Main()
     {
-        int startId = 1;
+        Console.Write("Enter start bicycle ID: ");
+        int startId = int.Parse(Console.ReadLine());
 
-        int endId = 25;
+        Console.Write("Enter end bicycle ID: ");
+        int endId = int.Parse(Console.ReadLine());
 
-        int interval = 10 * 1000;
-
-        int maxActiveBikes = 10;
+        Console.Write("Enter update interval (seconds): ");
+        int interval = int.Parse(Console.ReadLine()) * 1000;
 
         List<string> bicycleIds = new List<string>();
         for (int i = startId; i <= endId; i++)
@@ -38,371 +49,221 @@ class Program
             bicycleIds.Add($"urn:ngsi-ld:Bicycle:{i:D3}");
         }
 
-        // Define porto polygon for generating points
-        double[][] portoPolygon = new double[][]
+        // Start a separate thread to handle stopping
+        ThreadPool.QueueUserWorkItem(_ => 
         {
-            new double[] {-8.689051, 41.173113},
-            new double[] {-8.675078, 41.147266},
-            new double[] {-8.633337, 41.147179},
-            new double[] {-8.616012, 41.140305},
-            new double[] {-8.590393, 41.139868},
-            new double[] {-8.572156, 41.153743},
-            new double[] {-8.566115, 41.175561},
-            new double[] {-8.608054, 41.184668},
-            new double[] {-8.689051, 41.173113}
-        };
+            Console.WriteLine("\nPress Enter at any time to stop the simulation...");
+            Console.ReadLine();
+            stopRequested = true;
+            Console.WriteLine("Stop requested. Waiting for current cycle to complete...");
+        });
 
-        Random random = new Random();
+        await RunContinuousSimulation(bicycleIds, interval);
+        
+        Console.WriteLine("Simulation stopped. Press Enter to exit.");
+        Console.ReadLine();
+    }
 
-        // Initialize bike data
+    static async Task RunContinuousSimulation(List<string> bicycleIds, int interval)
+    {
+        Console.WriteLine("Starting continuous route simulation. Press Enter to stop at any time.");
+        
+        // Initialize routes for all bicycles
+        await InitializeRoutes(bicycleIds);
+        
+        int cycleCount = 0;
+        
+        while (!stopRequested)
+        {
+            cycleCount++;
+            Console.WriteLine($"\n======== CYCLE {cycleCount} ========");
+            
+            // Move bicycles along their routes
+            await MoveBicycles(bicycleIds, interval);
+            
+            // Generate new routes for bicycles that have completed their routes
+            await RegenerateCompletedRoutes(bicycleIds);
+        }
+        
+        Console.WriteLine($"Simulation ended after {cycleCount} cycles.");
+    }
+    
+    static async Task InitializeRoutes(List<string> bicycleIds)
+    {
+        Console.WriteLine("Generating initial routes for all bicycles...");
+        
         foreach (var bikeId in bicycleIds)
         {
-            bikeRoutesCompletedToday[bikeId] = 0;
-            bikeRouteCompleted[bikeId] = true; // Start with all routes completed
-            bikeNextActivityTime[bikeId] = AssignInitialActivityTime(random); // Stagger start times
-        }
-
-        // Fetch initial positions for all bicycles
-        await InitializeLastPositions(bicycleIds);
-
-        Console.WriteLine("Press Ctrl+C to stop the simulation.");
-        
-        // Set up cancellation
-        Console.CancelKeyPress += (sender, e) => {
-            e.Cancel = true;
-            isRunning = false;
-            Console.WriteLine("Stopping simulation gracefully...");
-        };
-
-        DateTime lastDayCheck = DateTime.Now.Date;
-        
-        while (isRunning)
-        {
-            // Check if it's a new day to reset counters
-            if (DateTime.Now.Date != lastDayCheck)
-            {
-                Console.WriteLine($"New day detected. Resetting daily route counters.");
-                foreach (var bikeId in bicycleIds)
-                {
-                    bikeRoutesCompletedToday[bikeId] = 0;
-                    // Assign new start times for the new day
-                    bikeNextActivityTime[bikeId] = AssignInitialActivityTime(random);
-                }
-                lastDayCheck = DateTime.Now.Date;
-            }
-
-            // Check if it's night time (between 00:00 and 08:00)
-            DateTime now = DateTime.Now;
-            if (now.Hour >= 0 && now.Hour < 8)
-            {
-                Console.WriteLine($"[{now:HH:mm:ss}] Night time (00:00-08:00). Bicycles are not active.");
-                
-                // Make sure all bicycles are parked during night time
-                await ParkAllBicycles(bicycleIds);
-                
-                // Sleep for 5 minutes during night time before checking again
-                Thread.Sleep(5 * 60 * 1000);
-                continue;
-            }
-
-            // Count how many bicycles are currently active
-            int currentlyActiveBikes = bicycleIds.Count(id => !bikeRouteCompleted[id]);
-            Console.WriteLine($"[{now:HH:mm:ss}] Currently active bicycles: {currentlyActiveBikes}/{maxActiveBikes}");
-
-            // Generate new routes for bicycles that should become active
-            List<string> eligibleBikes = bicycleIds
-                .Where(id => bikeRouteCompleted[id] && // bicycle is currently parked
-                           bikeRoutesCompletedToday[id] < 5 && // hasn't reached daily limit
-                           bikeNextActivityTime[id] <= now) // scheduled to activate now
-                .OrderBy(id => bikeNextActivityTime[id]) // prioritize by scheduled time
-                .ToList();
-
-            // Activate only enough bikes to stay under maxActiveBikes
-            int bikesToActivate = Math.Min(maxActiveBikes - currentlyActiveBikes, eligibleBikes.Count);
-            
-            if (bikesToActivate > 0)
-            {
-                Console.WriteLine($"[{now:HH:mm:ss}] Activating {bikesToActivate} new bicycles");
-                
-                for (int i = 0; i < bikesToActivate; i++)
-                {
-                    string bikeId = eligibleBikes[i];
-                    
-                    // Get the latest position for this bicycle
-                    double[] startPoint = bikeLastPosition[bikeId];
-                    if (startPoint == null)
-                    {
-                        Console.WriteLine($"No position available for {bikeId}. Generating random start point.");
-                        startPoint = GenerateRandomPointInsidePolygon(portoPolygon, random);
-                    }
-                    
-                    // First, update the bicycle as parked at its current position to refresh the timestamp
-                    Console.WriteLine($"Updating {bikeId} as parked at its current position to refresh timestamp");
-                    await UpdateBicyclePosition(bikeId, startPoint, "parked");
-                    
-                    // Wait a moment to ensure the timestamp changes
-                    await Task.Delay(1000);
-                    
-                    // Generate end point inside the polygon
-                    double[] endPoint = GenerateRandomPointInsidePolygon(portoPolygon, random);
-                    
-                    try
-                    {
-                        Console.WriteLine($"Generating new route for {bikeId} (routes completed today: {bikeRoutesCompletedToday[bikeId]}/5)");
-                        List<double[]> route = await GetCyclingRoute(startPoint, endPoint);
-                        Console.WriteLine($"Generated route for {bikeId} with {route.Count} points");
-                        
-                        bikeRoutes[bikeId] = route;
-                        bikeRoutePositions[bikeId] = 1; // Start at position 1 (index 0 is the start position)
-                        bikeRouteCompleted[bikeId] = false;
-                        
-                        // Now update to onRoute at the starting position
-                        await UpdateBicyclePosition(bikeId, startPoint, "onRoute");
-                    }
-                    catch (Exception ex)
-                    {
-                        Console.WriteLine($"❌ Failed to generate route for {bikeId}: {ex.Message}");
-                        // Create a simple direct route from start to end point
-                        List<double[]> simpleRoute = new List<double[]> { startPoint, endPoint };
-                        bikeRoutes[bikeId] = simpleRoute;
-                        bikeRoutePositions[bikeId] = 0;
-                        bikeRouteCompleted[bikeId] = false;
-                        Console.WriteLine($"✅ Created simple route for {bikeId} with 2 points");
-                        
-                        // Update to onRoute for the simple route as well
-                        await UpdateBicyclePosition(bikeId, startPoint, "onRoute");
-                    }
-                }
-            }
-            else if (eligibleBikes.Count > 0)
-            {
-                Console.WriteLine($"[{now:HH:mm:ss}] {eligibleBikes.Count} bicycles are eligible to start, but maximum active bikes ({maxActiveBikes}) reached");
-            }
-
-            // Update positions for bicycles that are on routes
-            bool allRoutesCompleted = true;
-            
-            foreach (var bikeId in bicycleIds)
-            {
-                // Skip bicycles that have completed their routes
-                if (bikeRouteCompleted[bikeId])
-                {
-                    continue;
-                }
-
-                allRoutesCompleted = false; // At least one bicycle is still on route
-                
-                var route = bikeRoutes[bikeId];
-                int routeLen = route.Count;
-                int currentPos = bikeRoutePositions[bikeId];
-
-                double[] newPoint;
-                string serviceStatus;
-
-                if (currentPos >= routeLen - 1)
-                {
-                    // At the end of route
-                    newPoint = route[routeLen - 1];
-                    serviceStatus = "parked";
-                    bikeRouteCompleted[bikeId] = true;
-                    bikeRoutesCompletedToday[bikeId]++;
-                    
-                    // Schedule next activity time for this bicycle
-                    bikeNextActivityTime[bikeId] = CalculateNextActivityTime(now, random, bikeId);
-                    
-                    Console.WriteLine($"🏁 {bikeId} has completed its route ({bikeRoutesCompletedToday[bikeId]}/5 today). Next activity at {bikeNextActivityTime[bikeId]:HH:mm:ss}");
-                }
-                else
-                {
-                    // Move along the route
-                    newPoint = route[currentPos];
-                    serviceStatus = "onRoute";
-                    bikeRoutePositions[bikeId] = currentPos + 1;
-                }
-
-                // Update the last known position
-                bikeLastPosition[bikeId] = newPoint;
-
-                // Update the bicycle's position in the system
-                await UpdateBicyclePosition(bikeId, newPoint, serviceStatus);
-            }
-
-            Console.WriteLine($"[{DateTime.Now:HH:mm:ss}] Waiting {interval / 1000} seconds...\n");
-            Thread.Sleep(interval);
-        }
-
-        Console.WriteLine("Simulation stopped.");
-    }
-
-    static DateTime AssignInitialActivityTime(Random random)
-    {
-        DateTime now = DateTime.Now;
-        
-        // If it's night time (00:00-08:00), start after 8am
-        if (now.Hour >= 0 && now.Hour < 8)
-        {
-            // Start sometime after 8am
-            DateTime baseTime = now.Date.AddHours(8);
-            int minutesToAdd = random.Next(0, 240); // Up to 4 hours after 8am
-            return baseTime.AddMinutes(minutesToAdd);
-        }
-        else
-        {
-            // Start sometime between now and 3 hours from now
-            int minutesToAdd = random.Next(0, 180);
-            return now.AddMinutes(minutesToAdd);
+            await GenerateNewRoute(bikeId);
         }
     }
-
-    static DateTime CalculateNextActivityTime(DateTime currentTime, Random random, string bikeId)
+    
+    static async Task GenerateNewRoute(string bikeId)
     {
-        // Get the day of week (0 = Sunday, 1 = Monday, ..., 6 = Saturday)
-        int dayOfWeek = (int)currentTime.DayOfWeek;
-        
-        // Determine if it's a weekday or weekend
-        bool isWeekend = dayOfWeek == 0 || dayOfWeek == 6;
-        
-        int minWaitMinutes, maxWaitMinutes;
-        
-        // Different wait patterns for weekends vs weekdays
-        if (isWeekend)
+        // Get current position if the bike already has a route
+        double[] startPoint;
+        if (bikeRoutes.ContainsKey(bikeId) && bikeRoutes[bikeId].Count > 0 && bikeRoutePositions.ContainsKey(bikeId))
         {
-            // Weekends: longer wait times (more leisure rides, less commuting)
-            minWaitMinutes = 30;
-            maxWaitMinutes = 240; // 30 min to 4 hours
-        }
-        else
-        {
-            // Weekdays: shorter wait times during rush hours, longer at other times
-            int hour = currentTime.Hour;
-            
-            if ((hour >= 7 && hour <= 9) || (hour >= 16 && hour <= 19))
+            int currentPos = bikeRoutePositions[bikeId];
+            if (currentPos < bikeRoutes[bikeId].Count)
             {
-                // Rush hours - shorter wait
-                minWaitMinutes = 15;
-                maxWaitMinutes = 90; // 15 min to 1.5 hours
+                startPoint = bikeRoutes[bikeId][currentPos];
             }
             else
             {
-                // Non-rush hours - longer wait
-                minWaitMinutes = 45;
-                maxWaitMinutes = 180; // 45 min to 3 hours
+                startPoint = bikeRoutes[bikeId].Last();
             }
         }
-        
-        // Randomize the wait time
-        int waitMinutes = random.Next(minWaitMinutes, maxWaitMinutes + 1);
-        
-        // Calculate the next activity time
-        DateTime nextTime = currentTime.AddMinutes(waitMinutes);
-        
-        // If the next activity would be during night hours, reschedule for the next morning
-        if (nextTime.Hour >= 0 && nextTime.Hour < 8)
+        else
         {
-            // Schedule for sometime after 8am the next day
-            nextTime = nextTime.Date.AddDays(1).AddHours(8).AddMinutes(random.Next(0, 120));
+            // Generate start point inside the polygon for new bikes
+            startPoint = GenerateRandomPointInsidePolygon(portoPolygon, random);
         }
         
-        return nextTime;
-    }
-
-    static async Task InitializeLastPositions(List<string> bicycleIds)
-    {
-        Console.WriteLine("Fetching current positions for all bicycles...");
+        // Generate end point that's relatively far away for longer routes
+        double maxDistance = 0.015; // Increased for longer routes
         
-        foreach (var bikeId in bicycleIds)
+        // Generate a random angle and distance within maxDistance
+        double angle = random.NextDouble() * 2 * Math.PI;
+        double distance = 0.005 + (random.NextDouble() * maxDistance);
+        
+        // Calculate the end point based on the angle and distance
+        double endLon = startPoint[0] + Math.Sin(angle) * distance;
+        double endLat = startPoint[1] + Math.Cos(angle) * distance;
+        double[] endPoint = new double[] { endLon, endLat };
+        
+        // Keep generating until we find an end point inside the polygon
+        int attempts = 0;
+        while (!IsPointInsidePolygon(portoPolygon, endLat, endLon) && attempts < 10) 
         {
-            try
-            {
-                HttpResponseMessage response = await client.GetAsync(orionUrl + bikeId);
-                
-                if (response.IsSuccessStatusCode)
-                {
-                    string content = await response.Content.ReadAsStringAsync();
-                    using (JsonDocument doc = JsonDocument.Parse(content))
-                    {
-                        if (doc.RootElement.TryGetProperty("location", out JsonElement location) &&
-                            location.TryGetProperty("value", out JsonElement locationValue) &&
-                            locationValue.TryGetProperty("coordinates", out JsonElement coordinates))
-                        {
-                            double lon = coordinates[0].GetDouble();
-                            double lat = coordinates[1].GetDouble();
-                            bikeLastPosition[bikeId] = new double[] { lon, lat };
-                            Console.WriteLine($"✅ Fetched position for {bikeId}: {lat}, {lon}");
-                        }
-                        else
-                        {
-                            Console.WriteLine($"⚠️ Could not find location data for {bikeId}");
-                            bikeLastPosition[bikeId] = null;
-                        }
-                    }
-                }
-                else
-                {
-                    Console.WriteLine($"❌ Failed to fetch position for {bikeId}: {response.StatusCode}");
-                    bikeLastPosition[bikeId] = null;
-                }
-            }
-            catch (Exception ex)
-            {
-                Console.WriteLine($"❌ Error fetching position for {bikeId}: {ex.Message}");
-                bikeLastPosition[bikeId] = null;
-            }
+            angle = random.NextDouble() * 2 * Math.PI;
+            distance = 0.005 + (random.NextDouble() * maxDistance);
+            endLon = startPoint[0] + Math.Sin(angle) * distance;
+            endLat = startPoint[1] + Math.Cos(angle) * distance;
+            endPoint = new double[] { endLon, endLat };
+            attempts++;
         }
-    }
-
-    static async Task ParkAllBicycles(List<string> bicycleIds)
-    {
-        foreach (var bikeId in bicycleIds)
+        
+        // If we couldn't find a suitable end point after 10 attempts,
+        // just use another random point in the polygon
+        if (!IsPointInsidePolygon(portoPolygon, endLat, endLon))
         {
-            if (!bikeRouteCompleted[bikeId])
-            {
-                double[] currentPos = bikeLastPosition[bikeId];
-                if (currentPos != null)
-                {
-                    await UpdateBicyclePosition(bikeId, currentPos, "parked");
-                    bikeRouteCompleted[bikeId] = true;
-                    Console.WriteLine($"🌙 Parked {bikeId} for the night");
-                }
-            }
+            Console.WriteLine($"Could not find nearby end point within polygon for {bikeId}, generating random end point");
+            endPoint = GenerateRandomPointInsidePolygon(portoPolygon, random);
         }
-    }
-
-    static async Task UpdateBicyclePosition(string bikeId, double[] position, string serviceStatus)
-    {
-        var updateData = new
-        {
-            location = new
-            {
-                type = "GeoProperty",
-                value = new
-                {
-                    type = "Point",
-                    coordinates = new double[] { position[0], position[1] }
-                }
-            },
-            serviceStatus = new
-            {
-                type = "Property",
-                value = serviceStatus
-            }
-        };
-
-        string jsonContent = JsonSerializer.Serialize(updateData);
-        HttpContent content = new StringContent(jsonContent, Encoding.UTF8, "application/json");
-        content.Headers.Add("Link", "<https://raw.githubusercontent.com/smart-data-models/dataModel.Transportation/master/context.jsonld>; rel=\"http://www.w3.org/ns/json-ld#context\"; type=\"application/ld+json\"");
 
         try
         {
-            HttpResponseMessage response = await client.PatchAsync(orionUrl + bikeId + "/attrs", content);
-            if (response.IsSuccessStatusCode)
-                Console.WriteLine($"✅ {bikeId} -> {serviceStatus}, Location: {position[1]}, {position[0]}");
-            else
-                Console.WriteLine($"❌ Failed to update {bikeId}: {response.StatusCode}");
+            List<double[]> route = await GetCyclingRoute(startPoint, endPoint);
+            Console.WriteLine($"Generated route for {bikeId} with {route.Count} points");
+            
+            bikeRoutes[bikeId] = route;
+            bikeRoutePositions[bikeId] = 0;
+            bikeRouteCompleted[bikeId] = false;
         }
         catch (Exception ex)
         {
-            Console.WriteLine($"❌ Error updating {bikeId}: {ex.Message}");
+            Console.WriteLine($"❌ Failed to generate route for {bikeId}: {ex.Message}");
+            // Create a simple direct route from start to end point
+            List<double[]> simpleRoute = new List<double[]>(); 
+            
+            // Create a few intermediate points on a straight line for more realistic movement
+            int numIntermediatePoints = 5 + random.Next(10); // 5-15 intermediate points
+            for (int i = 0; i <= numIntermediatePoints; i++)
+            {
+                double fraction = (double)i / numIntermediatePoints;
+                double lon = startPoint[0] + fraction * (endPoint[0] - startPoint[0]);
+                double lat = startPoint[1] + fraction * (endPoint[1] - startPoint[1]);
+                simpleRoute.Add(new double[] { lon, lat });
+            }
+            
+            bikeRoutes[bikeId] = simpleRoute;
+            bikeRoutePositions[bikeId] = 0;
+            bikeRouteCompleted[bikeId] = false;
+            Console.WriteLine($"✅ Created simple route for {bikeId} with {simpleRoute.Count} points");
+        }
+    }
+    
+    static async Task MoveBicycles(List<string> bicycleIds, int interval)
+    {
+        foreach (var bikeId in bicycleIds)
+        {
+            if (!bikeRoutes.ContainsKey(bikeId) || !bikeRoutePositions.ContainsKey(bikeId))
+            {
+                Console.WriteLine($"⚠️ {bikeId} doesn't have a route yet. Generating new route...");
+                await GenerateNewRoute(bikeId);
+                continue;
+            }
+            
+            var route = bikeRoutes[bikeId];
+            int routeLen = route.Count;
+            int currentPos = bikeRoutePositions[bikeId];
+
+            if (currentPos >= routeLen)
+            {
+                bikeRouteCompleted[bikeId] = true;
+                Console.WriteLine($"🏁 {bikeId} has completed its route");
+                continue;
+            }
+
+            double[] newPoint = route[currentPos];
+            string serviceStatus = (currentPos == 0 || currentPos == routeLen - 1) ? "parked" : "onRoute";
+            
+            var updateData = new
+            {
+                location = new
+                {
+                    type = "GeoProperty",
+                    value = new
+                    {
+                        type = "Point",
+                        coordinates = new double[] { newPoint[0], newPoint[1] }
+                    }
+                },
+                serviceStatus = new
+                {
+                    type = "Property",
+                    value = serviceStatus
+                }
+            };
+
+            string jsonContent = JsonSerializer.Serialize(updateData);
+            HttpContent content = new StringContent(jsonContent, Encoding.UTF8, "application/json");
+            content.Headers.Add("Link", "<https://raw.githubusercontent.com/smart-data-models/dataModel.Transportation/master/context.jsonld>; rel=\"http://www.w3.org/ns/json-ld#context\"; type=\"application/ld+json\"");
+
+            try
+            {
+                HttpResponseMessage response = await client.PatchAsync(orionUrl + bikeId + "/attrs", content);
+                if (response.IsSuccessStatusCode)
+                    Console.WriteLine($"✅ {bikeId} -> {serviceStatus}, Location: {newPoint[1]}, {newPoint[0]}, Position: {currentPos+1}/{routeLen}");
+                else
+                    Console.WriteLine($"❌ Failed to update {bikeId}: {response.StatusCode}");
+            }
+            catch (Exception ex)
+            {
+                Console.WriteLine($"❌ Error updating {bikeId}: {ex.Message}");
+            }
+            
+            // Move to the next position in the route
+            bikeRoutePositions[bikeId] = currentPos + 1;
+        }
+        
+        if (!stopRequested)
+        {
+            Console.WriteLine($"Waiting {interval / 1000} seconds...\n");
+            await Task.Delay(interval);
+        }
+    }
+    
+    static async Task RegenerateCompletedRoutes(List<string> bicycleIds)
+    {
+        foreach (var bikeId in bicycleIds)
+        {
+            if (bikeRouteCompleted.ContainsKey(bikeId) && bikeRouteCompleted[bikeId])
+            {
+                Console.WriteLine($"🔄 Generating new route for {bikeId}");
+                await GenerateNewRoute(bikeId);
+            }
         }
     }
 
@@ -424,12 +285,10 @@ class Program
             routeClient.DefaultRequestHeaders.Add("Authorization", openRouteServiceApiKey);
 
             string jsonRequest = JsonSerializer.Serialize(requestBody);
-            Console.WriteLine($"ORS Request: {jsonRequest}");
             HttpContent content = new StringContent(jsonRequest, Encoding.UTF8, "application/json");
 
             HttpResponseMessage response = await routeClient.PostAsync(openRouteServiceUrl, content);
             string responseContent = await response.Content.ReadAsStringAsync();
-            Console.WriteLine($"ORS Response status: {response.StatusCode}");
 
             if (!response.IsSuccessStatusCode)
             {
