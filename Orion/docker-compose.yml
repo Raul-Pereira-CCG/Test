@@ -1,9 +1,40 @@
 version: '3.8'
 
 services:
+
+  mongo-db:
+    image: mongo:4.2
+    container_name: db-mongo
+    restart: unless-stopped
+    environment:
+      MONGO_INITDB_ROOT_USERNAME: admin
+      MONGO_INITDB_ROOT_PASSWORD: strongpassword123
+    volumes:
+      - mongo-data:/data/db
+    expose:
+      - "27017"
+    networks:
+      - bike4all
+    command: --auth --nojournal
+
+  orion:
+    image: fiware/orion-ld:1.0.1
+    container_name: fiware-orion
+    depends_on:
+      - mongo-db
+    ports:
+      - "1026:1026"
+    command: -dbhost mongo-db -logLevel DEBUG
+    networks:
+      - bike4all
+    restart: unless-stopped
+    environment:
+      - MONGO_DB_NAME=orion
+      - MONGO_DB_USERNAME=admin
+      - MONGO_DB_PASSWORD=strongpassword123
+
   timescaledb:
     image: timescale/timescaledb-ha:pg16
-    hostname: timescaledb
     container_name: timescaledb
     environment:
       POSTGRES_DB: quantumleap
@@ -13,40 +44,12 @@ services:
       - "5432:5432"
     volumes:
       - timescale-data:/var/lib/postgresql/data
-    healthcheck:
-        test: curl --fail -s http://timescaledb:5432/version || exit 1
-
-  orion:
-    image: fiware/orion-ld:1.0.1
-    hostname: orion
-    container_name: fiware-orion
-    depends_on:
-        - mongo-db
+    restart: unless-stopped
     networks:
-        - default
-    ports:
-        - "1026:1026"
-    command: -dbhost mongo-db -logLevel DEBUG
-    healthcheck:
-        test: curl --fail -s http://orion:1026/version || exit 1
-    
-  mongo-db:
-    image: mongo:4.2
-    hostname: mongo-db
-    container_name: db-mongo
-    expose:
-        - "27017"
-    ports:
-        - "27017:27017"
-    networks:
-        - default
-    command: --nojournal
-    healthcheck:
-        test: curl --fail -s http://mongo-db:27017/version || exit 1
+      - bike4all
 
   quantumleap:
     image: orchestracities/quantumleap:latest
-    hostname: quantumleap
     container_name: quantumleap
     ports:
       - "8668:8668"
@@ -60,12 +63,12 @@ services:
       - QL_DEFAULT_DB=timescale 
     depends_on:
       - timescaledb
-    healthcheck:
-        test: curl --fail -s http://quantumleap:8668/version || exit 1
-  
+    restart: unless-stopped
+    networks:
+      - bike4all
+
   grafana:
     image: grafana/grafana:latest
-    hostname: grafana
     container_name: grafana
     ports:
       - "9095:3000"
@@ -74,16 +77,21 @@ services:
     environment:
       - GF_SECURITY_ADMIN_USER=admin
       - GF_SECURITY_ADMIN_PASSWORD=admin
-      - GF_SERVER_ROOT_URL=http://localhost:9095
+      - GF_SERVER_ROOT_URL=http://grafana:3000
       - GF_SECURITY_ALLOW_EMBEDDING=true
       - GF_AUTH_ANONYMOUS_ENABLED=true
       - GF_AUTH_ANONYMOUS_ORG_ROLE=Viewer
       - GF_INSTALL_PLUGINS=yesoreyeram-boomtheme-panel
     restart: unless-stopped
-    healthcheck:
-        test: curl --fail -s http://grafana:9095/version || exit 1
-  
+    networks:
+      - bike4all
+
+networks:
+  bike4all:
+    driver: bridge
+
 volumes:
   timescale-data:
   mongo-data:
   grafana_data:
+
