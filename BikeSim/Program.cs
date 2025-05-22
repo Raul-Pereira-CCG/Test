@@ -121,7 +121,7 @@ class Program
         }
         
         // Generate end point that's relatively far away for longer routes
-        double maxDistance = 0.015; // Increased for longer routes
+        double maxDistance = 0.025; // Increased for longer routes
         
         // Generate a random angle and distance within maxDistance
         double angle = random.NextDouble() * 2 * Math.PI;
