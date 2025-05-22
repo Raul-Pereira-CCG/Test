@@ -17,6 +17,9 @@ class Program
     static Dictionary<string, List<double[]>> bikeRoutes = new Dictionary<string, List<double[]>>();
     static Dictionary<string, int> bikeRoutePositions = new Dictionary<string, int>();
     static Dictionary<string, bool> bikeRouteCompleted = new Dictionary<string, bool>();
+    static Dictionary<string, bool> bikeIsActive = new Dictionary<string, bool>(); // Track active vs parked bicycles
+    static Dictionary<string, double[]> bikeLastPosition = new Dictionary<string, double[]>(); // Track last known position
+    
     static double[][] portoPolygon = new double[][]
     {
         new double[] {-8.689051, 41.173113},
@@ -43,6 +46,9 @@ class Program
         Console.Write("Enter update interval (seconds): ");
         int interval = int.Parse(Console.ReadLine()) * 1000;
 
+        Console.Write("Enter percentage of bicycles active at any time (1-100): ");
+        int activePercentage = Math.Max(1, Math.Min(100, int.Parse(Console.ReadLine())));
+
         List<string> bicycleIds = new List<string>();
         for (int i = startId; i <= endId; i++)
         {
@@ -55,21 +61,24 @@ class Program
             Console.WriteLine("\nPress Enter at any time to stop the simulation...");
             Console.ReadLine();
             stopRequested = true;
-            Console.WriteLine("Stop requested. Waiting for current cycle to complete...");
+            Console.WriteLine("Stop requested. Parking all bicycles and stopping simulation...");
         });
 
-        await RunContinuousSimulation(bicycleIds, interval);
+        await RunContinuousSimulation(bicycleIds, interval, activePercentage);
         
         Console.WriteLine("Simulation stopped. Press Enter to exit.");
         Console.ReadLine();
     }
 
-    static async Task RunContinuousSimulation(List<string> bicycleIds, int interval)
+    static async Task RunContinuousSimulation(List<string> bicycleIds, int interval, int activePercentage)
     {
-        Console.WriteLine("Starting continuous route simulation. Press Enter to stop at any time.");
+        Console.WriteLine($"Starting continuous route simulation with {activePercentage}% active bicycles. Press Enter to stop at any time.");
         
-        // Initialize routes for all bicycles
-        await InitializeRoutes(bicycleIds);
+        // Initialize all bicycles as parked with random positions
+        await InitializeBicycles(bicycleIds);
+        
+        // Activate initial set of bicycles
+        await ActivateInitialBicycles(bicycleIds, activePercentage);
         
         int cycleCount = 0;
         
@@ -78,78 +87,68 @@ class Program
             cycleCount++;
             Console.WriteLine($"\n======== CYCLE {cycleCount} ========");
             
-            // Move bicycles along their routes
+            // Move active bicycles along their routes
             await MoveBicycles(bicycleIds, interval);
             
-            // Generate new routes for bicycles that have completed their routes
-            await RegenerateCompletedRoutes(bicycleIds);
+            // Handle bicycle rotation and route generation
+            if (!stopRequested)
+            {
+                await HandleBicycleRotation(bicycleIds, activePercentage);
+            }
         }
         
-        Console.WriteLine($"Simulation ended after {cycleCount} cycles.");
+        // Park all bicycles before stopping
+        await ParkAllBicycles(bicycleIds);
+        
+        Console.WriteLine($"Simulation ended after {cycleCount} cycles. All bicycles are now parked.");
     }
     
-    static async Task InitializeRoutes(List<string> bicycleIds)
+    static async Task InitializeBicycles(List<string> bicycleIds)
     {
-        Console.WriteLine("Generating initial routes for all bicycles...");
+        Console.WriteLine("Initializing all bicycles as parked...");
         
         foreach (var bikeId in bicycleIds)
         {
+            // Generate random parking position
+            double[] parkingPosition = GenerateRandomPointInsidePolygon(portoPolygon, random);
+            bikeLastPosition[bikeId] = parkingPosition;
+            bikeIsActive[bikeId] = false;
+            
+            // Set bicycle as parked in the system
+            await UpdateBicycleStatus(bikeId, parkingPosition, "parked");
+        }
+    }
+    
+    static async Task ActivateInitialBicycles(List<string> bicycleIds, int activePercentage)
+    {
+        int numToActivate = Math.Max(1, (bicycleIds.Count * activePercentage) / 100);
+        var bicyclesToActivate = bicycleIds.OrderBy(x => random.Next()).Take(numToActivate).ToList();
+        
+        Console.WriteLine($"Activating {numToActivate} bicycles for initial routes...");
+        
+        foreach (var bikeId in bicyclesToActivate)
+        {
+            bikeIsActive[bikeId] = true;
             await GenerateNewRoute(bikeId);
         }
     }
     
     static async Task GenerateNewRoute(string bikeId)
     {
-        // Get current position if the bike already has a route
-        double[] startPoint;
-        if (bikeRoutes.ContainsKey(bikeId) && bikeRoutes[bikeId].Count > 0 && bikeRoutePositions.ContainsKey(bikeId))
-        {
-            int currentPos = bikeRoutePositions[bikeId];
-            if (currentPos < bikeRoutes[bikeId].Count)
-            {
-                startPoint = bikeRoutes[bikeId][currentPos];
-            }
-            else
-            {
-                startPoint = bikeRoutes[bikeId].Last();
-            }
-        }
-        else
-        {
-            // Generate start point inside the polygon for new bikes
-            startPoint = GenerateRandomPointInsidePolygon(portoPolygon, random);
-        }
+        // Get current position 
+        double[] startPoint = bikeLastPosition.ContainsKey(bikeId) 
+            ? bikeLastPosition[bikeId] 
+            : GenerateRandomPointInsidePolygon(portoPolygon, random);
         
-        // Generate end point that's relatively far away for longer routes
-        double maxDistance = 0.025; // Increased for longer routes
+        // Generate end point anywhere within the polygon (removed distance restrictions)
+        double[] endPoint = GenerateRandomPointInsidePolygon(portoPolygon, random);
         
-        // Generate a random angle and distance within maxDistance
-        double angle = random.NextDouble() * 2 * Math.PI;
-        double distance = 0.005 + (random.NextDouble() * maxDistance);
-        
-        // Calculate the end point based on the angle and distance
-        double endLon = startPoint[0] + Math.Sin(angle) * distance;
-        double endLat = startPoint[1] + Math.Cos(angle) * distance;
-        double[] endPoint = new double[] { endLon, endLat };
-        
-        // Keep generating until we find an end point inside the polygon
+        // Ensure start and end points are different
         int attempts = 0;
-        while (!IsPointInsidePolygon(portoPolygon, endLat, endLon) && attempts < 10) 
+        while (Math.Abs(startPoint[0] - endPoint[0]) < 0.001 && Math.Abs(startPoint[1] - endPoint[1]) < 0.001 && attempts < 5)
         {
-            angle = random.NextDouble() * 2 * Math.PI;
-            distance = 0.005 + (random.NextDouble() * maxDistance);
-            endLon = startPoint[0] + Math.Sin(angle) * distance;
-            endLat = startPoint[1] + Math.Cos(angle) * distance;
-            endPoint = new double[] { endLon, endLat };
-            attempts++;
-        }
-        
-        // If we couldn't find a suitable end point after 10 attempts,
-        // just use another random point in the polygon
-        if (!IsPointInsidePolygon(portoPolygon, endLat, endLon))
-        {
-            Console.WriteLine($"Could not find nearby end point within polygon for {bikeId}, generating random end point");
             endPoint = GenerateRandomPointInsidePolygon(portoPolygon, random);
+            attempts++;
         }
 
         try
@@ -167,8 +166,8 @@ class Program
             // Create a simple direct route from start to end point
             List<double[]> simpleRoute = new List<double[]>(); 
             
-            // Create a few intermediate points on a straight line for more realistic movement
-            int numIntermediatePoints = 5 + random.Next(10); // 5-15 intermediate points
+            // Create intermediate points on a straight line for more realistic movement
+            int numIntermediatePoints = 10 + random.Next(20); // 10-30 intermediate points
             for (int i = 0; i <= numIntermediatePoints; i++)
             {
                 double fraction = (double)i / numIntermediatePoints;
@@ -188,6 +187,12 @@ class Program
     {
         foreach (var bikeId in bicycleIds)
         {
+            // Skip parked bicycles
+            if (!bikeIsActive.ContainsKey(bikeId) || !bikeIsActive[bikeId])
+            {
+                continue;
+            }
+            
             if (!bikeRoutes.ContainsKey(bikeId) || !bikeRoutePositions.ContainsKey(bikeId))
             {
                 Console.WriteLine($"⚠️ {bikeId} doesn't have a route yet. Generating new route...");
@@ -207,42 +212,11 @@ class Program
             }
 
             double[] newPoint = route[currentPos];
+            bikeLastPosition[bikeId] = newPoint;
             string serviceStatus = (currentPos == 0 || currentPos == routeLen - 1) ? "parked" : "onRoute";
             
-            var updateData = new
-            {
-                location = new
-                {
-                    type = "GeoProperty",
-                    value = new
-                    {
-                        type = "Point",
-                        coordinates = new double[] { newPoint[0], newPoint[1] }
-                    }
-                },
-                serviceStatus = new
-                {
-                    type = "Property",
-                    value = serviceStatus
-                }
-            };
-
-            string jsonContent = JsonSerializer.Serialize(updateData);
-            HttpContent content = new StringContent(jsonContent, Encoding.UTF8, "application/json");
-            content.Headers.Add("Link", "<https://raw.githubusercontent.com/smart-data-models/dataModel.Transportation/master/context.jsonld>; rel=\"http://www.w3.org/ns/json-ld#context\"; type=\"application/ld+json\"");
-
-            try
-            {
-                HttpResponseMessage response = await client.PatchAsync(orionUrl + bikeId + "/attrs", content);
-                if (response.IsSuccessStatusCode)
-                    Console.WriteLine($"✅ {bikeId} -> {serviceStatus}, Location: {newPoint[1]}, {newPoint[0]}, Position: {currentPos+1}/{routeLen}");
-                else
-                    Console.WriteLine($"❌ Failed to update {bikeId}: {response.StatusCode}");
-            }
-            catch (Exception ex)
-            {
-                Console.WriteLine($"❌ Error updating {bikeId}: {ex.Message}");
-            }
+            await UpdateBicycleStatus(bikeId, newPoint, serviceStatus);
+            Console.WriteLine($"✅ {bikeId} -> {serviceStatus}, Location: {newPoint[1]}, {newPoint[0]}, Position: {currentPos+1}/{routeLen}");
             
             // Move to the next position in the route
             bikeRoutePositions[bikeId] = currentPos + 1;
@@ -255,15 +229,92 @@ class Program
         }
     }
     
-    static async Task RegenerateCompletedRoutes(List<string> bicycleIds)
+    static async Task HandleBicycleRotation(List<string> bicycleIds, int activePercentage)
     {
-        foreach (var bikeId in bicycleIds)
+        // Park bicycles that have completed their routes
+        var completedBikes = bicycleIds.Where(id => 
+            bikeRouteCompleted.ContainsKey(id) && 
+            bikeRouteCompleted[id] && 
+            bikeIsActive.ContainsKey(id) && 
+            bikeIsActive[id]).ToList();
+        
+        foreach (var bikeId in completedBikes)
         {
-            if (bikeRouteCompleted.ContainsKey(bikeId) && bikeRouteCompleted[bikeId])
+            Console.WriteLine($"🅿️ Parking {bikeId} after route completion");
+            bikeIsActive[bikeId] = false;
+            await UpdateBicycleStatus(bikeId, bikeLastPosition[bikeId], "parked");
+        }
+        
+        // Calculate how many bicycles should be active
+        int targetActiveBikes = Math.Max(1, (bicycleIds.Count * activePercentage) / 100);
+        int currentActiveBikes = bicycleIds.Count(id => bikeIsActive.ContainsKey(id) && bikeIsActive[id]);
+        
+        // Activate parked bicycles if we're below target
+        if (currentActiveBikes < targetActiveBikes)
+        {
+            var parkedBikes = bicycleIds.Where(id => 
+                !bikeIsActive.ContainsKey(id) || 
+                !bikeIsActive[id]).ToList();
+            
+            int bikesToActivate = Math.Min(targetActiveBikes - currentActiveBikes, parkedBikes.Count);
+            var bikesToActivateList = parkedBikes.OrderBy(x => random.Next()).Take(bikesToActivate).ToList();
+            
+            foreach (var bikeId in bikesToActivateList)
             {
-                Console.WriteLine($"🔄 Generating new route for {bikeId}");
+                Console.WriteLine($"🚴 Activating {bikeId} for new route");
+                bikeIsActive[bikeId] = true;
                 await GenerateNewRoute(bikeId);
             }
+        }
+    }
+    
+    static async Task ParkAllBicycles(List<string> bicycleIds)
+    {
+        Console.WriteLine("Parking all bicycles...");
+        
+        foreach (var bikeId in bicycleIds)
+        {
+            if (bikeLastPosition.ContainsKey(bikeId))
+            {
+                await UpdateBicycleStatus(bikeId, bikeLastPosition[bikeId], "parked");
+                Console.WriteLine($"🅿️ Parked {bikeId}");
+            }
+        }
+    }
+    
+    static async Task UpdateBicycleStatus(string bikeId, double[] position, string serviceStatus)
+    {
+        var updateData = new
+        {
+            location = new
+            {
+                type = "GeoProperty",
+                value = new
+                {
+                    type = "Point",
+                    coordinates = new double[] { position[0], position[1] }
+                }
+            },
+            serviceStatus = new
+            {
+                type = "Property",
+                value = serviceStatus
+            }
+        };
+
+        string jsonContent = JsonSerializer.Serialize(updateData);
+        HttpContent content = new StringContent(jsonContent, Encoding.UTF8, "application/json");
+        content.Headers.Add("Link", "<https://raw.githubusercontent.com/smart-data-models/dataModel.Transportation/master/context.jsonld>; rel=\"http://www.w3.org/ns/json-ld#context\"; type=\"application/ld+json\"");
+
+        try
+        {
+            HttpResponseMessage response = await client.PatchAsync(orionUrl + bikeId + "/attrs", content);
+            if (!response.IsSuccessStatusCode)
+                Console.WriteLine($"❌ Failed to update {bikeId}: {response.StatusCode}");
+        }
+        catch (Exception ex)
+        {
+            Console.WriteLine($"❌ Error updating {bikeId}: {ex.Message}");
         }
     }
 
