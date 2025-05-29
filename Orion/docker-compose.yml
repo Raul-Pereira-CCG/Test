@@ -18,6 +18,15 @@ services:
       - bike4all
     command: --auth
 
+  orionapidotnet:
+    build: ./BIKE_API_Docker
+    ports:
+      - "5000:5000"
+    environment:
+      - DOTNET_RUNNINGINCONTAINER=true
+    networks:
+      - bike4all
+
   orion:
     image: fiware/orion-ld:1.0.1
     container_name: fiware-orion
