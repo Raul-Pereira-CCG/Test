@@ -10,7 +10,7 @@ namespace OrionApiDotNet.Services
 
         public MongoService()
         {
-            var client = new MongoClient("mongodb://57.128.119.16:27017");
+            var client = new MongoClient("mongodb://mongo-db:27017");
             var database = client.GetDatabase("Bicicletas");
             _bicycles = database.GetCollection<Bicycle>("bicycles");
             _bicyclesS = database.GetCollection<BicycleSimples>("bicycles");
