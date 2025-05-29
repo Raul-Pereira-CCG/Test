@@ -1,0 +1,16 @@
+version: '3.8'
+
+services:  
+  orionapidotnet:
+    build: ./BIKE_API_Docker
+    ports:
+      - "5000:5000"
+    environment:
+      - DOTNET_RUNNINGINCONTAINER=true
+    networks:
+      - bike4all
+ 
+networks:
+  bike4all:
+    driver: bridge
+

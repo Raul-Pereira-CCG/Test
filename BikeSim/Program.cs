@@ -10,15 +10,15 @@ using System.Linq;
 class Program
 {
     static readonly HttpClient client = new HttpClient();
-    static readonly string orionUrl = "http://57.128.119.16:1026/ngsi-ld/v1/entities/";
+    static readonly string orionUrl = "http://localhost:1026/ngsi-ld/v1/entities/";
     static readonly string openRouteServiceUrl = "https://api.openrouteservice.org/v2/directions/cycling-regular/geojson";
     static readonly string openRouteServiceApiKey = "5b3ce3597851110001cf62489b01ed6658bd4e98b6467c80b90934c0";
 
     static Dictionary<string, List<double[]>> bikeRoutes = new Dictionary<string, List<double[]>>();
     static Dictionary<string, int> bikeRoutePositions = new Dictionary<string, int>();
     static Dictionary<string, bool> bikeRouteCompleted = new Dictionary<string, bool>();
-    static Dictionary<string, bool> bikeIsActive = new Dictionary<string, bool>(); // Track active vs parked bicycles
-    static Dictionary<string, double[]> bikeLastPosition = new Dictionary<string, double[]>(); // Track last known position
+    static Dictionary<string, bool> bikeIsActive = new Dictionary<string, bool>();
+    static Dictionary<string, double[]> bikeLastPosition = new Dictionary<string, double[]>();
     
     static double[][] portoPolygon = new double[][]
     {
@@ -74,7 +74,7 @@ class Program
     {
         Console.WriteLine($"Starting continuous route simulation with {activePercentage}% active bicycles. Press Enter to stop at any time.");
         
-        // Initialize all bicycles as parked with random positions
+        // Initialize all bicycles as parked
         await InitializeBicycles(bicycleIds);
         
         // Activate initial set of bicycles
@@ -140,7 +140,7 @@ class Program
             ? bikeLastPosition[bikeId] 
             : GenerateRandomPointInsidePolygon(portoPolygon, random);
         
-        // Generate end point anywhere within the polygon (removed distance restrictions)
+        // Generate end point anywhere within the polygon
         double[] endPoint = GenerateRandomPointInsidePolygon(portoPolygon, random);
         
         // Ensure start and end points are different
@@ -167,7 +167,7 @@ class Program
             List<double[]> simpleRoute = new List<double[]>(); 
             
             // Create intermediate points on a straight line for more realistic movement
-            int numIntermediatePoints = 10 + random.Next(20); // 10-30 intermediate points
+            int numIntermediatePoints = 10 + random.Next(20);
             for (int i = 0; i <= numIntermediatePoints; i++)
             {
                 double fraction = (double)i / numIntermediatePoints;
