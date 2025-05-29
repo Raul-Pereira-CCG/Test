@@ -12,7 +12,7 @@ namespace OrionApiDotNet.Controllers;
 public class OrionController : ControllerBase
 {
     private readonly HttpClient _httpClient;
-    private const string OrionUrl = "http://orion:1026/ngsi-ld/v1/entities";
+    private const string OrionUrl = "http://57.128.119.16:1026/ngsi-ld/v1/entities";
     private readonly MongoService _mongoService = new MongoService();
 
     public OrionController()
