@@ -18,15 +18,6 @@ services:
       - bike4all
     command: --auth
 
-  orionapidotnet:
-    build: ./BIKE_API_Docker
-    ports:
-      - "5000:5000"
-    environment:
-      - DOTNET_RUNNINGINCONTAINER=true
-    networks:
-      - bike4all
-
   orion:
     image: fiware/orion-ld:1.0.1
     container_name: fiware-orion
@@ -60,7 +51,7 @@ services:
       - "8668:8668"
     environment:
       - POSTGRES_HOST=timescaledb        
-      - POSTGRES_PORT=5432                   
+      - POSTGRES_PORT=5432               
       - POSTGRES_DB_NAME=quantumleap      
       - POSTGRES_DB_USER=quantumleap
       - POSTGRES_DB_PASS=12345    
