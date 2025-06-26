@@ -71,7 +71,7 @@ class Program
         List<string> bicycleIds = new List<string>();
         for (int i = startId; i <= endId; i++)
         {
-            bicycleIds.Add($"urn:ngsi-ld:Bicycle:{i:D3}");
+            bicycleIds.Add($"urn:ngsi-ld:Vehicle:{i:D3}");
         }
 
         // Initialize docking stations
