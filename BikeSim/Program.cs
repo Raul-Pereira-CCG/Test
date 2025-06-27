@@ -128,7 +128,7 @@ class Program
                     
                     // Extract current vehicles (bicycles already parked at station)
                     List<string> parkedBicycles = new List<string>();
-                    if (stationElement.TryGetProperty("vehicles", out JsonElement vehiclesElement))
+                    if (stationElement.TryGetProperty("refVehicle", out JsonElement vehiclesElement))
                     {
                         if (vehiclesElement.TryGetProperty("value", out JsonElement valueElement))
                         {
@@ -516,7 +516,7 @@ class Program
                 type = "Property",
                 value = station.OutOfServiceSlots
             },
-            vehicles = new
+            refVehicle = new
             {
                 type = "Property",
                 value = station.ParkedBicycles.ToArray()
