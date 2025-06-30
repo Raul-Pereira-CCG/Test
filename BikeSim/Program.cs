@@ -704,10 +704,26 @@ class Program
         
         return false;
     }
-    
+
     static async Task<bool> UpdateDockingStationStatus(string stationId)
     {
         var station = dockingStations[stationId];
+        
+        // Solution 1: Ensure proper JSON serialization with explicit handling
+        // Create the update data ensuring refVehicle is always properly formatted
+        object refVehicleValue;
+        if (station.ParkedBicycles.Count == 0)
+        {
+            refVehicleValue = new string[0]; // Empty array
+        }
+        else if (station.ParkedBicycles.Count == 1)
+        {
+            refVehicleValue = new string[] { station.ParkedBicycles[0] }; // Force array for single item
+        }
+        else
+        {
+            refVehicleValue = station.ParkedBicycles.ToArray(); // Multiple items
+        }
         
         var updateData = new
         {
@@ -729,13 +745,23 @@ class Program
             refVehicle = new
             {
                 type = "Property",
-                value = station.ParkedBicycles.Count == 1 ? 
-                    new string[] { station.ParkedBicycles[0] } : 
-                    station.ParkedBicycles.ToArray()
+                value = refVehicleValue
             }
         };
 
-        string jsonContent = JsonSerializer.Serialize(updateData);
+        // Configure JSON serializer options to handle URNs properly
+        var jsonOptions = new JsonSerializerOptions
+        {
+            WriteIndented = false,
+            PropertyNamingPolicy = JsonNamingPolicy.CamelCase,
+            Encoder = System.Text.Encodings.Web.JavaScriptEncoder.UnsafeRelaxedJsonEscaping
+        };
+
+        string jsonContent = JsonSerializer.Serialize(updateData, jsonOptions);
+        
+        // Debug: Print the JSON to see what's being sent
+        Console.WriteLine($"🔍 JSON being sent for {stationId}: {jsonContent}");
+        
         HttpContent content = new StringContent(jsonContent, Encoding.UTF8, "application/json");
         content.Headers.Add("Link", "<https://raw.githubusercontent.com/smart-data-models/dataModel.Transportation/master/context.jsonld>; rel=\"http://www.w3.org/ns/json-ld#context\"; type=\"application/ld+json\"");
 
