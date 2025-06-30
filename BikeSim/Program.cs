@@ -729,7 +729,9 @@ class Program
             refVehicle = new
             {
                 type = "Property",
-                value = station.ParkedBicycles.ToList()
+                value = station.ParkedBicycles.Count == 1 ? 
+                    new string[] { station.ParkedBicycles[0] } : 
+                    station.ParkedBicycles.ToArray()
             }
         };
 
