@@ -6,54 +6,75 @@ using System.Threading.Tasks;
 using System.Threading;
 using System.Collections.Generic;
 using System.Linq;
+using System.Collections.Concurrent;
 
 class Program
 {
-    static readonly HttpClient client = new HttpClient();
-    static readonly string orionUrl = "http://57.128.119.16:1027/ngsi-ld/v1/entities/";
-    static readonly string openRouteServiceUrl = "https://api.openrouteservice.org/v2/directions/cycling-regular/geojson";
-    static readonly string openRouteServiceApiKey = "5b3ce3597851110001cf62489b01ed6658bd4e98b6467c80b90934c0";
+    /* ------------------------------------------------------------------ */
+    /* Configuration                                                       */
+    /* ------------------------------------------------------------------ */
+    static readonly HttpClient client  = new HttpClient();
+    static readonly string orionUrl    = "http://57.128.119.16:1027/ngsi-ld/v1/entities/";
+    static readonly string openRouteServiceUrl =
+        "https://api.openrouteservice.org/v2/directions/cycling-regular/geojson";
+    static readonly string openRouteServiceApiKey =
+        "5b3ce3597851110001cf62489b01ed6658bd4e98b6467c80";
 
-    static Dictionary<string, List<double[]>> bikeRoutes = new Dictionary<string, List<double[]>>();
-    static Dictionary<string, int> bikeRoutePositions = new Dictionary<string, int>();
-    static Dictionary<string, bool> bikeRouteCompleted = new Dictionary<string, bool>();
-    static Dictionary<string, bool> bikeIsActive = new Dictionary<string, bool>();
-    static Dictionary<string, double[]> bikeLastPosition = new Dictionary<string, double[]>();
-    static Dictionary<string, string> bikeCurrentStation = new Dictionary<string, string>(); // bikeId -> stationId
-    static Dictionary<string, string> bikeDestinationStation = new Dictionary<string, string>(); // bikeId -> stationId
-    
-    // Docking station data
-    static Dictionary<string, DockingStation> dockingStations = new Dictionary<string, DockingStation>();
-    
-    static double[][] portoPolygon = new double[][]
+    /* ------------------------------------------------------------------ */
+    /* Simulation state                                                    */
+    /* ------------------------------------------------------------------ */
+    static Dictionary<string, List<double[]>> bikeRoutes            = new();
+    static Dictionary<string, int>            bikeRoutePositions    = new();
+    static Dictionary<string, bool>           bikeRouteCompleted    = new();
+    static Dictionary<string, bool>           bikeIsActive          = new();
+    static Dictionary<string, double[]>       bikeLastPosition      = new();
+    static Dictionary<string, string>         bikeCurrentStation    = new();
+    static Dictionary<string, string>         bikeDestinationStation= new();
+    static Dictionary<string, DockingStation> dockingStations       = new();
+
+    /* One semaphore per docking‑station so patches are serialized   */
+    static readonly ConcurrentDictionary<string, SemaphoreSlim> stationLocks =
+        new ConcurrentDictionary<string, SemaphoreSlim>();
+
+    static Random random        = new Random();
+    static bool   stopRequested = false;
+
+    /* ------------------------------------------------------------------ */
+    /* Static geometry: Porto polygon for random points                   */
+    /* ------------------------------------------------------------------ */
+    static readonly double[][] portoPolygon =
     {
-        new double[] {-8.689051, 41.173113},
-        new double[] {-8.675078, 41.147266},
-        new double[] {-8.633337, 41.147179},
-        new double[] {-8.616012, 41.140305},
-        new double[] {-8.590393, 41.139868},
-        new double[] {-8.572156, 41.153743},
-        new double[] {-8.566115, 41.175561},
-        new double[] {-8.608054, 41.184668},
-        new double[] {-8.689051, 41.173113}
+        new [] { -8.689051, 41.173113 },
+        new [] { -8.675078, 41.147266 },
+        new [] { -8.633337, 41.147179 },
+        new [] { -8.616012, 41.140305 },
+        new [] { -8.590393, 41.139868 },
+        new [] { -8.572156, 41.153743 },
+        new [] { -8.566115, 41.175561 },
+        new [] { -8.608054, 41.184668 },
+        new [] { -8.689051, 41.173113 }
     };
-    static Random random = new Random();
-    static bool stopRequested = false;
 
+    /* ------------------------------------------------------------------ */
+    /* Domain models                                                       */
+    /* ------------------------------------------------------------------ */
     public class DockingStation
     {
-        public string Id { get; set; }
-        public double[] Location { get; set; }
-        public int TotalSlots { get; set; }
-        public int OutOfServiceSlots { get; set; }
-        public List<string> ParkedBicycles { get; set; } = new List<string>();
-        
-        public int AvailableBikes => ParkedBicycles.Count;
-        public int FreeSlots => TotalSlots - OutOfServiceSlots - ParkedBicycles.Count;
+        public string Id              { get; set; }
+        public double[] Location      { get; set; }
+        public int TotalSlots         { get; set; }
+        public int OutOfServiceSlots  { get; set; }
+        public List<string> ParkedBicycles { get; set; } = new();
+
+        public int  AvailableBikes  => ParkedBicycles.Count;
+        public int  FreeSlots       => TotalSlots - OutOfServiceSlots - ParkedBicycles.Count;
         public bool HasAvailableSlots => FreeSlots > 0;
         public bool HasAvailableBikes => ParkedBicycles.Count > 0;
     }
 
+    /* ================================================================== */
+    /* Entry point                                                        */
+    /* ================================================================== */
     static async Task Main()
     {
         Console.Write("Enter start bicycle ID: ");
@@ -68,600 +89,467 @@ class Program
         Console.Write("Enter percentage of bicycles active at any time (1-100): ");
         int activePercentage = Math.Max(1, Math.Min(100, int.Parse(Console.ReadLine())));
 
-        List<string> bicycleIds = new List<string>();
-        for (int i = startId; i <= endId; i++)
-        {
-            bicycleIds.Add($"urn:ngsi-ld:Vehicle:{i:D3}");
-        }
+        var bicycleIds = Enumerable.Range(startId, endId - startId + 1)
+                                   .Select(i => $"urn:ngsi-ld:Vehicle:{i:D3}")
+                                   .ToList();
 
-        // Initialize docking stations
+        /* Load stations & bikes already parked */
         await InitializeDockingStations();
 
-        // Start a separate thread to handle stopping
-        ThreadPool.QueueUserWorkItem(_ => 
+        /* Allow user to stop simulation */
+        ThreadPool.QueueUserWorkItem(_ =>
         {
-            Console.WriteLine("\nPress Enter at any time to stop the simulation...");
+            Console.WriteLine("\nPress Enter at any time to stop the simulation…");
             Console.ReadLine();
             stopRequested = true;
-            Console.WriteLine("Stop requested. Parking all bicycles and stopping simulation...");
+            Console.WriteLine("Stop requested – parking all bicycles and terminating.");
         });
 
         await RunContinuousSimulation(bicycleIds, interval, activePercentage);
-        
+
         Console.WriteLine("Simulation stopped. Press Enter to exit.");
         Console.ReadLine();
     }
 
+    /* ================================================================== */
+    /* Initialisation helpers                                             */
+    /* ================================================================== */
+
     static async Task InitializeDockingStations()
     {
-        Console.WriteLine("Fetching existing docking stations from API...");
-        
-        try
+        Console.WriteLine("Fetching existing docking stations from Context Broker…");
+
+        string stationsUrl =
+            "http://57.128.119.16:1027/ngsi-ld/v1/entities?type=https://smartdatamodels.org/dataModel.Transportation/BikeHireDockingStation";
+
+        HttpResponseMessage response = await client.GetAsync(stationsUrl);
+        if (!response.IsSuccessStatusCode)
+            throw new Exception($"Failed to fetch stations: {response.StatusCode}");
+
+        string payload = await response.Content.ReadAsStringAsync();
+        using JsonDocument doc = JsonDocument.Parse(payload);
+
+        foreach (JsonElement element in doc.RootElement.EnumerateArray())
         {
-            string stationsUrl = "http://57.128.119.16:1027/ngsi-ld/v1/entities?type=https://smartdatamodels.org/dataModel.Transportation/BikeHireDockingStation";
-            HttpResponseMessage response = await client.GetAsync(stationsUrl);
-            
-            if (!response.IsSuccessStatusCode)
+            string id = element.GetProperty("id").GetString();
+
+            double[] loc = element.GetProperty("location")
+                                  .GetProperty("value")
+                                  .GetProperty("coordinates")
+                                  .EnumerateArray()
+                                  .Select(c => c.GetDouble())
+                                  .ToArray();
+
+            int totalSlots        = GetPropertyValue(element,
+                "https://smartdatamodels.org/dataModel.Transportation/totalSlotNumber");
+            int outOfServiceSlots = GetPropertyValue(element,
+                "https://smartdatamodels.org/dataModel.Transportation/outOfServiceSlotNumber");
+
+            var station = new DockingStation
             {
-                throw new Exception($"Failed to fetch stations: {response.StatusCode}");
-            }
-            
-            string responseContent = await response.Content.ReadAsStringAsync();
-            using (JsonDocument doc = JsonDocument.Parse(responseContent))
+                Id = id,
+                Location = loc,
+                TotalSlots = totalSlots,
+                OutOfServiceSlots = outOfServiceSlots
+            };
+
+            if (element.TryGetProperty("refVehicle", out JsonElement refV) &&
+                refV.TryGetProperty("value", out JsonElement vehs))
             {
-                foreach (JsonElement stationElement in doc.RootElement.EnumerateArray())
+                foreach (var v in vehs.EnumerateArray())
                 {
-                    string stationId = stationElement.GetProperty("id").GetString();
-                    
-                    // Extract location coordinates
-                    double[] location = stationElement
-                        .GetProperty("location")
-                        .GetProperty("value")
-                        .GetProperty("coordinates")
-                        .EnumerateArray()
-                        .Select(coord => coord.GetDouble())
-                        .ToArray();
-                    
-                    // Extract station properties
-                    int totalSlots = GetPropertyValue(stationElement, "https://smartdatamodels.org/dataModel.Transportation/totalSlotNumber");
-                    int outOfServiceSlots = GetPropertyValue(stationElement, "https://smartdatamodels.org/dataModel.Transportation/outOfServiceSlotNumber");
-                    
-                    // Extract current vehicles (bicycles already parked at station)
-                    List<string> parkedBicycles = new List<string>();
-                    if (stationElement.TryGetProperty("refVehicle", out JsonElement vehiclesElement))
-                    {
-                        if (vehiclesElement.TryGetProperty("value", out JsonElement valueElement))
-                        {
-                            foreach (JsonElement vehicle in valueElement.EnumerateArray())
-                            {
-                                parkedBicycles.Add(vehicle.GetString());
-                            }
-                        }
-                    }
-                    
-                    // Create station object
-                    var station = new DockingStation
-                    {
-                        Id = stationId,
-                        Location = location,
-                        TotalSlots = totalSlots,
-                        OutOfServiceSlots = outOfServiceSlots
-                    };
-                    station.ParkedBicycles.AddRange(parkedBicycles);
-                    
-                    dockingStations[stationId] = station;
-                    
-                    // Update bicycle tracking for already parked bicycles
-                    foreach (string bikeId in parkedBicycles)
-                    {
-                        bikeCurrentStation[bikeId] = stationId;
-                        bikeLastPosition[bikeId] = location;
-                    }
-                    
-                    Console.WriteLine($"Loaded station {stationId}: {station.AvailableBikes} bikes, {station.FreeSlots} free slots");
+                    string bikeId = v.GetString();
+                    station.ParkedBicycles.Add(bikeId);
+
+                    bikeCurrentStation[bikeId] = id;
+                    bikeLastPosition [bikeId] = loc;
                 }
             }
-            
-            Console.WriteLine($"Successfully loaded {dockingStations.Count} docking stations from API");
+
+            dockingStations[id] = station;
+            Console.WriteLine($"Loaded {id}: {station.AvailableBikes} bikes, {station.FreeSlots} free slots");
         }
-        catch (Exception ex)
-        {
-            Console.WriteLine($"❌ Error fetching docking stations: {ex.Message}");
-            Console.WriteLine("Please ensure the Context Broker is running and stations exist.");
-            throw;
-        }
-    }
-    
-    static int GetPropertyValue(JsonElement element, string propertyName)
-    {
-        if (element.TryGetProperty(propertyName, out JsonElement property))
-        {
-            if (property.TryGetProperty("value", out JsonElement value))
-            {
-                return value.GetInt32();
-            }
-        }
-        return 0;
+
+        Console.WriteLine($"Loaded {dockingStations.Count} docking stations.\n");
     }
 
-    static async Task RunContinuousSimulation(List<string> bicycleIds, int interval, int activePercentage)
+    static int GetPropertyValue(JsonElement element, string name)
     {
-        Console.WriteLine($"Starting continuous route simulation with {activePercentage}% active bicycles. Press Enter to stop at any time.");
-        
-        // Initialize all bicycles as parked in stations
-        await InitializeBicycles(bicycleIds);
-        
-        // Activate initial set of bicycles
-        await ActivateInitialBicycles(bicycleIds, activePercentage);
-        
-        int cycleCount = 0;
-        
+        return element.TryGetProperty(name, out var prop) &&
+               prop.TryGetProperty("value", out var value)
+             ? value.GetInt32()
+             : 0;
+    }
+
+    /* ================================================================== */
+    /* Main simulation loop                                               */
+    /* ================================================================== */
+
+    static async Task RunContinuousSimulation(List<string> bikes, int interval, int activePercentage)
+    {
+        await InitializeBicycles(bikes);
+        await ActivateInitialBicycles(bikes, activePercentage);
+
+        int cycle = 0;
         while (!stopRequested)
         {
-            cycleCount++;
-            Console.WriteLine($"\n======== CYCLE {cycleCount} ========");
-            
-            // Move active bicycles along their routes
-            await MoveBicycles(bicycleIds, interval);
-            
-            // Handle bicycle rotation and route generation
+            cycle++;
+            Console.WriteLine($"\n======= CYCLE {cycle} =======");
+
+            await MoveBicycles(bikes, interval);
             if (!stopRequested)
-            {
-                await HandleBicycleRotation(bicycleIds, activePercentage);
-            }
+                await HandleBicycleRotation(bikes, activePercentage);
         }
-        
-        // Park all bicycles before stopping
-        await ParkAllBicycles(bicycleIds);
-        
-        Console.WriteLine($"Simulation ended after {cycleCount} cycles. All bicycles are now parked.");
+
+        await ParkAllBicycles(bikes);
     }
-    
-    static async Task InitializeBicycles(List<string> bicycleIds)
+
+    /* ================================================================== */
+    /* Bicycle initialisation                                             */
+    /* ================================================================== */
+
+    static async Task InitializeBicycles(List<string> bikes)
     {
-        Console.WriteLine("Initializing bicycles...");
-        
-        // Separate bicycles that are already parked at stations from new ones
-        var bicyclesAlreadyParked = new List<string>();
-        var bicyclesToAssign = new List<string>();
-        
-        foreach (var bikeId in bicycleIds)
+        Console.WriteLine("Initialising bicycles…");
+
+        var parked   = bikes.Where(b => bikeCurrentStation.ContainsKey(b)).ToList();
+        var unparked = bikes.Except(parked).ToList();
+
+        Console.WriteLine($"Found {parked.Count} already parked, {unparked.Count} to assign.");
+
+        foreach (var bikeId in unparked)
         {
-            if (bikeCurrentStation.ContainsKey(bikeId))
-            {
-                bicyclesAlreadyParked.Add(bikeId);
-                bikeIsActive[bikeId] = false;
-                Console.WriteLine($"✅ {bikeId} already parked at station {bikeCurrentStation[bikeId]}");
-            }
-            else
-            {
-                bicyclesToAssign.Add(bikeId);
-            }
-        }
-        
-        Console.WriteLine($"Found {bicyclesAlreadyParked.Count} bicycles already parked, {bicyclesToAssign.Count} to assign");
-        
-        // Assign unparked bicycles to available stations
-        foreach (var bikeId in bicyclesToAssign)
-        {
-            var availableStations = dockingStations.Values
-                .Where(s => s.HasAvailableSlots)
-                .OrderBy(x => random.Next())
-                .ToList();
-            
-            if (availableStations.Count == 0)
-            {
-                // If no stations have slots, find the station with the most capacity
-                var bestStation = dockingStations.Values
-                    .OrderByDescending(s => s.TotalSlots - s.OutOfServiceSlots - s.ParkedBicycles.Count)
-                    .First();
-                availableStations.Add(bestStation);
-                Console.WriteLine($"⚠️ No free slots available, parking {bikeId} at {bestStation.Id} (overloading station)");
-            }
-            
-            var selectedStation = availableStations.First();
-            await ParkBicycleAtStation(bikeId, selectedStation.Id);
+            var station = dockingStations.Values
+                                         .Where(s => s.HasAvailableSlots)
+                                         .OrderBy(_ => random.Next())
+                                         .FirstOrDefault()
+                          ?? dockingStations.Values
+                             .OrderByDescending(s => s.FreeSlots)
+                             .First();
+
+            await ParkBicycleAtStation(bikeId, station.Id);
             bikeIsActive[bikeId] = false;
-            Console.WriteLine($"🅿️ Assigned {bikeId} to station {selectedStation.Id}");
+            Console.WriteLine($"🅿️  Assigned {bikeId} to station {station.Id}");
         }
-        
-        Console.WriteLine($"All {bicycleIds.Count} bicycles are now assigned to stations");
     }
-    
-    static async Task ActivateInitialBicycles(List<string> bicycleIds, int activePercentage)
+
+    static async Task ActivateInitialBicycles(List<string> bikes, int pct)
     {
-        int numToActivate = Math.Max(1, (bicycleIds.Count * activePercentage) / 100);
-        var bicyclesToActivate = bicycleIds.OrderBy(x => random.Next()).Take(numToActivate).ToList();
-        
-        Console.WriteLine($"Activating {numToActivate} bicycles for initial routes...");
-        
-        foreach (var bikeId in bicyclesToActivate)
+        int n = Math.Max(1, bikes.Count * pct / 100);
+        var toActivate = bikes.OrderBy(_ => random.Next()).Take(n);
+
+        Console.WriteLine($"Activating {n} bicycles…");
+
+        foreach (var bike in toActivate)
         {
-            // Only activate if the bicycle is at a station
-            if (bikeCurrentStation.ContainsKey(bikeId))
-            {
-                bikeIsActive[bikeId] = true;
-                await GenerateNewRoute(bikeId);
-            }
+            if (!bikeCurrentStation.ContainsKey(bike)) continue;
+
+            bikeIsActive[bike] = true;
+            await GenerateNewRoute(bike);
         }
     }
-    
+
+    /* ================================================================== */
+    /* Route generation & movement                                        */
+    /* ================================================================== */
+
     static async Task GenerateNewRoute(string bikeId)
     {
-        // Bicycle must start from its current station
-        if (!bikeCurrentStation.ContainsKey(bikeId))
+        if (!bikeCurrentStation.TryGetValue(bikeId, out string startStationId))
         {
-            Console.WriteLine($"❌ {bikeId} is not at any station. Cannot generate route.");
+            Console.WriteLine($"❌ {bikeId} not at a station – can’t generate route.");
             return;
         }
-        
-        string startStationId = bikeCurrentStation[bikeId];
+
         var startStation = dockingStations[startStationId];
-        double[] startPoint = startStation.Location;
-        
-        // Remove bicycle from current station
+        double[] start   = startStation.Location;
+
         await RemoveBicycleFromStation(bikeId, startStationId);
-        
-        // Choose a destination station with available slots
-        var availableDestinations = dockingStations.Values
+
+        var destinations = dockingStations.Values
             .Where(s => s.Id != startStationId && s.HasAvailableSlots)
             .ToList();
-            
-        if (availableDestinations.Count == 0)
-        {
-            Console.WriteLine($"⚠️ No available destination stations for {bikeId}. Using any station.");
-            availableDestinations = dockingStations.Values.Where(s => s.Id != startStationId).ToList();
-        }
-        
-        var destinationStation = availableDestinations.OrderBy(x => random.Next()).First();
-        double[] endPoint = destinationStation.Location;
-        
-        bikeDestinationStation[bikeId] = destinationStation.Id;
+
+        if (destinations.Count == 0)
+            destinations = dockingStations.Values.Where(s => s.Id != startStationId).ToList();
+
+        var destStation = destinations.OrderBy(_ => random.Next()).First();
+        double[] end    = destStation.Location;
+
+        bikeDestinationStation[bikeId] = destStation.Id;
 
         try
         {
-            List<double[]> route = await GetCyclingRoute(startPoint, endPoint);
-            Console.WriteLine($"Generated route for {bikeId} from {startStationId} to {destinationStation.Id} with {route.Count} points");
-            
-            bikeRoutes[bikeId] = route;
+            var route = await GetCyclingRoute(start, end);
+            bikeRoutes      [bikeId] = route;
             bikeRoutePositions[bikeId] = 0;
             bikeRouteCompleted[bikeId] = false;
+
+            Console.WriteLine($"Route for {bikeId}: {route.Count} points, {startStationId} → {destStation.Id}");
         }
-        catch (Exception ex)
+        catch
         {
-            Console.WriteLine($"❌ Failed to generate route for {bikeId}: {ex.Message}");
-            // Create a simple direct route from start to end point
-            List<double[]> simpleRoute = new List<double[]>(); 
-            
-            // Create intermediate points on a straight line for more realistic movement
-            int numIntermediatePoints = 10 + random.Next(20);
-            for (int i = 0; i <= numIntermediatePoints; i++)
+            /* fallback – straight line */
+            var direct = new List<double[]>();
+            int steps  = 10 + random.Next(20);
+            for (int i = 0; i <= steps; i++)
             {
-                double fraction = (double)i / numIntermediatePoints;
-                double lon = startPoint[0] + fraction * (endPoint[0] - startPoint[0]);
-                double lat = startPoint[1] + fraction * (endPoint[1] - startPoint[1]);
-                simpleRoute.Add(new double[] { lon, lat });
+                double f   = (double)i / steps;
+                double lon = start[0] + f * (end[0] - start[0]);
+                double lat = start[1] + f * (end[1] - start[1]);
+                direct.Add(new[] { lon, lat });
             }
-            
-            bikeRoutes[bikeId] = simpleRoute;
+
+            bikeRoutes      [bikeId] = direct;
             bikeRoutePositions[bikeId] = 0;
             bikeRouteCompleted[bikeId] = false;
-            Console.WriteLine($"✅ Created simple route for {bikeId} with {simpleRoute.Count} points");
+
+            Console.WriteLine($"Fallback route for {bikeId}: {direct.Count} points.");
         }
     }
-    
-    static async Task MoveBicycles(List<string> bicycleIds, int interval)
+
+    static async Task MoveBicycles(List<string> bikes, int interval)
     {
-        foreach (var bikeId in bicycleIds)
+        foreach (var bike in bikes)
         {
-            // Skip parked bicycles
-            if (!bikeIsActive.ContainsKey(bikeId) || !bikeIsActive[bikeId])
-            {
-                continue;
-            }
-            
-            if (!bikeRoutes.ContainsKey(bikeId) || !bikeRoutePositions.ContainsKey(bikeId))
-            {
-                Console.WriteLine($"⚠️ {bikeId} doesn't have a route yet. Generating new route...");
-                await GenerateNewRoute(bikeId);
-                continue;
-            }
-            
-            var route = bikeRoutes[bikeId];
-            int routeLen = route.Count;
-            int currentPos = bikeRoutePositions[bikeId];
+            if (!bikeIsActive.GetValueOrDefault(bike)) continue;
 
-            if (currentPos >= routeLen)
+            if (!bikeRoutes.TryGetValue(bike, out var route))
             {
-                bikeRouteCompleted[bikeId] = true;
-                Console.WriteLine($"🏁 {bikeId} has completed its route");
+                Console.WriteLine($"⚠️ {bike} has no route – regenerating.");
+                await GenerateNewRoute(bike);
                 continue;
             }
 
-            double[] newPoint = route[currentPos];
-            bikeLastPosition[bikeId] = newPoint;
-            string serviceStatus = "onRoute";
-            
-            await UpdateBicycleStatus(bikeId, newPoint, serviceStatus);
-            Console.WriteLine($"✅ {bikeId} -> {serviceStatus}, Location: {newPoint[1]}, {newPoint[0]}, Position: {currentPos+1}/{routeLen}");
-            
-            // Move to the next position in the route
-            bikeRoutePositions[bikeId] = currentPos + 1;
+            int pos   = bikeRoutePositions[bike];
+            if (pos >= route.Count)
+            {
+                bikeRouteCompleted[bike] = true;
+                Console.WriteLine($"🏁 {bike} completed its route.");
+                continue;
+            }
+
+            double[] nextPoint = route[pos];
+            bikeLastPosition[bike] = nextPoint;
+
+            await UpdateBicycleStatus(bike, nextPoint, "onRoute");
+            bikeRoutePositions[bike] = pos + 1;
         }
-        
+
         if (!stopRequested)
         {
-            Console.WriteLine($"Waiting {interval / 1000} seconds...\n");
+            Console.WriteLine($"Sleeping {interval / 1000}s…");
             await Task.Delay(interval);
         }
     }
-    
-    static async Task HandleBicycleRotation(List<string> bicycleIds, int activePercentage)
+
+    static async Task HandleBicycleRotation(List<string> bikes, int pct)
     {
-        // Park bicycles that have completed their routes
-        var completedBikes = bicycleIds.Where(id => 
-            bikeRouteCompleted.ContainsKey(id) && 
-            bikeRouteCompleted[id] && 
-            bikeIsActive.ContainsKey(id) && 
-            bikeIsActive[id]).ToList();
-        
-        foreach (var bikeId in completedBikes)
+        var completed = bikes
+            .Where(b => bikeRouteCompleted.GetValueOrDefault(b) && bikeIsActive.GetValueOrDefault(b))
+            .ToList();
+
+        foreach (var bike in completed)
         {
-            string destinationStationId = bikeDestinationStation[bikeId];
-            Console.WriteLine($"🅿️ Parking {bikeId} at station {destinationStationId}");
-            
-            await ParkBicycleAtStation(bikeId, destinationStationId);
-            bikeIsActive[bikeId] = false;
+            string dest = bikeDestinationStation[bike];
+            await ParkBicycleAtStation(bike, dest);
+            bikeIsActive[bike] = false;
         }
-        
-        // Calculate how many bicycles should be active
-        int targetActiveBikes = Math.Max(1, (bicycleIds.Count * activePercentage) / 100);
-        int currentActiveBikes = bicycleIds.Count(id => bikeIsActive.ContainsKey(id) && bikeIsActive[id]);
-        
-        // Activate parked bicycles if we're below target
-        if (currentActiveBikes < targetActiveBikes)
+
+        int targetActive = Math.Max(1, bikes.Count * pct / 100);
+        int currentActive = bikes.Count(b => bikeIsActive.GetValueOrDefault(b));
+
+        if (currentActive < targetActive)
         {
-            var parkedBikes = bicycleIds.Where(id => 
-                (!bikeIsActive.ContainsKey(id) || !bikeIsActive[id]) &&
-                bikeCurrentStation.ContainsKey(id)).ToList();
-            
-            int bikesToActivate = Math.Min(targetActiveBikes - currentActiveBikes, parkedBikes.Count);
-            var bikesToActivateList = parkedBikes.OrderBy(x => random.Next()).Take(bikesToActivate).ToList();
-            
-            foreach (var bikeId in bikesToActivateList)
+            var candidates = bikes
+                .Where(b => !bikeIsActive.GetValueOrDefault(b) && bikeCurrentStation.ContainsKey(b))
+                .OrderBy(_ => random.Next())
+                .Take(targetActive - currentActive);
+
+            foreach (var bike in candidates)
             {
-                Console.WriteLine($"🚴 Activating {bikeId} for new route from station {bikeCurrentStation[bikeId]}");
-                bikeIsActive[bikeId] = true;
-                await GenerateNewRoute(bikeId);
+                bikeIsActive[bike] = true;
+                await GenerateNewRoute(bike);
             }
         }
     }
-    
-    static async Task ParkAllBicycles(List<string> bicycleIds)
-    {
-        Console.WriteLine("Parking all bicycles at their designated stations...");
-        
-        foreach (var bikeId in bicycleIds)
-        {
-            if (bikeIsActive.ContainsKey(bikeId) && bikeIsActive[bikeId])
-            {
-                // If bicycle is active, park it at its destination station
-                if (bikeDestinationStation.ContainsKey(bikeId))
-                {
-                    await ParkBicycleAtStation(bikeId, bikeDestinationStation[bikeId]);
-                }
-                else if (bikeCurrentStation.ContainsKey(bikeId))
-                {
-                    await ParkBicycleAtStation(bikeId, bikeCurrentStation[bikeId]);
-                }
-                bikeIsActive[bikeId] = false;
-                Console.WriteLine($"🅿️ Parked {bikeId}");
-            }
-        }
-    }
-    
+
+    /* ================================================================== */
+    /* Park / remove helpers – now thread‑safe                             */
+    /* ================================================================== */
+
     static async Task ParkBicycleAtStation(string bikeId, string stationId)
     {
         var station = dockingStations[stationId];
-        
-        // Add bicycle to station
-        if (!station.ParkedBicycles.Contains(bikeId))
+        var sem     = stationLocks.GetOrAdd(stationId, _ => new SemaphoreSlim(1, 1));
+
+        await sem.WaitAsync();
+        try
         {
-            station.ParkedBicycles.Add(bikeId);
+            if (!station.ParkedBicycles.Contains(bikeId))
+                station.ParkedBicycles.Add(bikeId);
+
+            bikeCurrentStation[bikeId] = stationId;
+            bikeLastPosition [bikeId] = station.Location;
         }
-        
-        // Update bicycle's current station
-        bikeCurrentStation[bikeId] = stationId;
-        bikeLastPosition[bikeId] = station.Location;
-        
-        // Update bicycle status
+        finally { sem.Release(); }
+
         await UpdateBicycleStatus(bikeId, station.Location, "parked");
-        
-        // Update station status
         await UpdateDockingStationStatus(stationId);
     }
-    
+
     static async Task RemoveBicycleFromStation(string bikeId, string stationId)
     {
         var station = dockingStations[stationId];
-        
-        // Remove bicycle from station
-        station.ParkedBicycles.Remove(bikeId);
-        
-        // Remove bicycle's current station
-        bikeCurrentStation.Remove(bikeId);
-        
-        // Update station status
+        var sem     = stationLocks.GetOrAdd(stationId, _ => new SemaphoreSlim(1, 1));
+
+        await sem.WaitAsync();
+        try
+        {
+            station.ParkedBicycles.Remove(bikeId);
+            bikeCurrentStation.Remove(bikeId);
+        }
+        finally { sem.Release(); }
+
         await UpdateDockingStationStatus(stationId);
     }
-    
+
+    /* ================================================================== */
+    /* PATCH helpers – concurrency‑safe & retry                            */
+    /* ================================================================== */
+
+    static async Task<bool> PatchWithRetry(string url, HttpContent content, int max = 3)
+    {
+        for (int attempt = 1; attempt <= max; attempt++)
+        {
+            try
+            {
+                HttpResponseMessage resp = await client.PatchAsync(url, content);
+                if (resp.IsSuccessStatusCode) return true;
+
+                Console.WriteLine($"⚠️ PATCH {url} failed ({resp.StatusCode}) " +
+                                  $"attempt {attempt}/{max}");
+            }
+            catch (Exception ex)
+            {
+                Console.WriteLine($"⚠️ PATCH {url} exception {ex.Message} " +
+                                  $"attempt {attempt}/{max}");
+            }
+            await Task.Delay(200 * attempt);   // back‑off
+        }
+        return false;
+    }
+
     static async Task UpdateDockingStationStatus(string stationId)
     {
         var station = dockingStations[stationId];
-        
-        var updateData = new
-        {
-            availableBikeNumber = new
-            {
-                type = "Property",
-                value = station.AvailableBikes
-            },
-            freeSlotNumber = new
-            {
-                type = "Property",
-                value = station.FreeSlots
-            },
-            outOfServiceSlotNumber = new
-            {
-                type = "Property",
-                value = station.OutOfServiceSlots
-            },
-            refVehicle = new
-            {
-                type = "Property",
-                value = station.ParkedBicycles.ToArray()
-            }
-        };
+        var sem     = stationLocks.GetOrAdd(stationId, _ => new SemaphoreSlim(1, 1));
 
-        string jsonContent = JsonSerializer.Serialize(updateData);
-        HttpContent content = new StringContent(jsonContent, Encoding.UTF8, "application/json");
-        content.Headers.Add("Link", "<https://raw.githubusercontent.com/smart-data-models/dataModel.Transportation/master/context.jsonld>; rel=\"http://www.w3.org/ns/json-ld#context\"; type=\"application/ld+json\"");
-
+        await sem.WaitAsync();
         try
         {
-            HttpResponseMessage response = await client.PatchAsync(orionUrl + stationId + "/attrs", content);
-            if (response.IsSuccessStatusCode)
+            var data = new
             {
-                Console.WriteLine($"📊 Updated station {stationId}: {station.AvailableBikes} bikes, {station.FreeSlots} free slots");
-            }
+                availableBikeNumber = new { type = "Property", value = station.AvailableBikes },
+                freeSlotNumber      = new { type = "Property", value = station.FreeSlots },
+                outOfServiceSlotNumber = new { type = "Property", value = station.OutOfServiceSlots },
+                refVehicle          = new { type = "Property", value = station.ParkedBicycles.ToArray() }
+            };
+
+            string json  = JsonSerializer.Serialize(data);
+            var content  = new StringContent(json, Encoding.UTF8, "application/json");
+            content.Headers.Add("Link",
+                "<https://raw.githubusercontent.com/smart-data-models/dataModel.Transportation/master/context.jsonld>; " +
+                "rel=\"http://www.w3.org/ns/json-ld#context\"; type=\"application/ld+json\"");
+
+            bool ok = await PatchWithRetry(orionUrl + stationId + "/attrs", content);
+            if (ok)
+                Console.WriteLine($"📊 Updated {stationId}: {station.AvailableBikes} bikes, {station.FreeSlots} slots");
             else
-            {
-                Console.WriteLine($"❌ Failed to update station {stationId}: {response.StatusCode}");
-            }
+                Console.WriteLine($"❌ Gave up updating {stationId} after retries");
         }
-        catch (Exception ex)
-        {
-            Console.WriteLine($"❌ Error updating station {stationId}: {ex.Message}");
-        }
+        finally { sem.Release(); }
     }
-    
-    static async Task UpdateBicycleStatus(string bikeId, double[] position, string serviceStatus)
+
+    static async Task UpdateBicycleStatus(string bikeId, double[] pos, string status)
     {
-        var updateData = new
+        var data = new
         {
             location = new
             {
-                type = "GeoProperty",
-                value = new
-                {
-                    type = "Point",
-                    coordinates = new double[] { position[0], position[1] }
-                }
+                type  = "GeoProperty",
+                value = new { type = "Point", coordinates = new[] { pos[0], pos[1] } }
             },
-            serviceStatus = new
-            {
-                type = "Property",
-                value = serviceStatus
-            }
+            serviceStatus = new { type = "Property", value = status }
         };
 
-        string jsonContent = JsonSerializer.Serialize(updateData);
-        HttpContent content = new StringContent(jsonContent, Encoding.UTF8, "application/json");
-        content.Headers.Add("Link", "<https://raw.githubusercontent.com/smart-data-models/dataModel.Transportation/master/context.jsonld>; rel=\"http://www.w3.org/ns/json-ld#context\"; type=\"application/ld+json\"");
+        string json = JsonSerializer.Serialize(data);
+        var content = new StringContent(json, Encoding.UTF8, "application/json");
+        content.Headers.Add("Link",
+            "<https://raw.githubusercontent.com/smart-data-models/dataModel.Transportation/master/context.jsonld>; " +
+            "rel=\"http://www.w3.org/ns/json-ld#context\"; type=\"application/ld+json\"");
 
-        try
-        {
-            HttpResponseMessage response = await client.PatchAsync(orionUrl + bikeId + "/attrs", content);
-            if (!response.IsSuccessStatusCode)
-                Console.WriteLine($"❌ Failed to update {bikeId}: {response.StatusCode}");
-        }
-        catch (Exception ex)
-        {
-            Console.WriteLine($"❌ Error updating {bikeId}: {ex.Message}");
-        }
+        if (!await PatchWithRetry(orionUrl + bikeId + "/attrs", content, 2))
+            Console.WriteLine($"❌ Failed to update bike {bikeId}");
     }
 
-    static async Task<List<double[]>> GetCyclingRoute(double[] startPoint, double[] endPoint)
+    /* ================================================================== */
+    /* External route API helper                                          */
+    /* ================================================================== */
+
+    static async Task<List<double[]>> GetCyclingRoute(double[] start, double[] end)
     {
-        try
-        {
-            Console.WriteLine("Using OpenRouteService API...");
-            var requestBody = new
-            {
-                coordinates = new[]
-                {
-                    new[] { startPoint[0], startPoint[1] },
-                    new[] { endPoint[0], endPoint[1] }
-                }
-            };
+        var body = new { coordinates = new[] { start, end } };
+        var json = JsonSerializer.Serialize(body);
+        var content = new StringContent(json, Encoding.UTF8, "application/json");
 
-            HttpClient routeClient = new HttpClient();
-            routeClient.DefaultRequestHeaders.Add("Authorization", openRouteServiceApiKey);
+        using var rc = new HttpClient();
+        rc.DefaultRequestHeaders.Add("Authorization", openRouteServiceApiKey);
 
-            string jsonRequest = JsonSerializer.Serialize(requestBody);
-            HttpContent content = new StringContent(jsonRequest, Encoding.UTF8, "application/json");
+        HttpResponseMessage resp = await rc.PostAsync(openRouteServiceUrl, content);
+        string payload = await resp.Content.ReadAsStringAsync();
+        if (!resp.IsSuccessStatusCode)
+            throw new Exception($"ORS {resp.StatusCode}: {payload}");
 
-            HttpResponseMessage response = await routeClient.PostAsync(openRouteServiceUrl, content);
-            string responseContent = await response.Content.ReadAsStringAsync();
+        using JsonDocument doc = JsonDocument.Parse(payload);
+        var coords = doc.RootElement.GetProperty("features")[0]
+                                    .GetProperty("geometry")
+                                    .GetProperty("coordinates");
 
-            if (!response.IsSuccessStatusCode)
-            {
-                throw new Exception($"API returned {response.StatusCode}: {responseContent}");
-            }
-
-            using (JsonDocument doc = JsonDocument.Parse(responseContent))
-            {
-                JsonElement coordinates = doc.RootElement
-                    .GetProperty("features")[0]
-                    .GetProperty("geometry")
-                    .GetProperty("coordinates");
-
-                List<double[]> route = new List<double[]>();
-                foreach (JsonElement coord in coordinates.EnumerateArray())
-                {
-                    double lon = coord[0].GetDouble();
-                    double lat = coord[1].GetDouble();
-                    route.Add(new double[] { lon, lat });
-                }
-                return route;
-            }
-        }
-        catch (Exception ex)
-        {
-            Console.WriteLine($"OpenRouteService API failed: {ex.Message}");
-            Console.WriteLine("Using direct route from start to end point");
-            throw;
-        }
+        return coords.EnumerateArray()
+                     .Select(c => new[] { c[0].GetDouble(), c[1].GetDouble() })
+                     .ToList();
     }
 
-    static double[] GenerateRandomPointInsidePolygon(double[][] polygon, Random random)
-    {
-        double minLat = polygon.Min(p => p[1]);
-        double maxLat = polygon.Max(p => p[1]);
-        double minLon = polygon.Min(p => p[0]);
-        double maxLon = polygon.Max(p => p[0]);
+    /* ================================================================== */
+    /* Geometry helpers                                                   */
+    /* ================================================================== */
 
-        double latitude, longitude;
+    static double[] GenerateRandomPointInsidePolygon(double[][] poly, Random rnd)
+    {
+        double minLat = poly.Min(p => p[1]), maxLat = poly.Max(p => p[1]);
+        double minLon = poly.Min(p => p[0]), maxLon = poly.Max(p => p[0]);
+
+        double lat, lon;
         do
         {
-            latitude = minLat + (random.NextDouble() * (maxLat - minLat));
-            longitude = minLon + (random.NextDouble() * (maxLon - minLon));
-        } while (!IsPointInsidePolygon(polygon, latitude, longitude));
+            lat = minLat + rnd.NextDouble() * (maxLat - minLat);
+            lon = minLon + rnd.NextDouble() * (maxLon - minLon);
+        } while (!IsPointInsidePolygon(poly, lat, lon));
 
-        return new double[] { longitude, latitude };
+        return new[] { lon, lat };
     }
 
-    static bool IsPointInsidePolygon(double[][] polygon, double lat, double lon)
+    static bool IsPointInsidePolygon(double[][] poly, double lat, double lon)
     {
-        int n = polygon.Length;
         bool inside = false;
-        for (int i = 0, j = n - 1; i < n; j = i++)
+        for (int i = 0, j = poly.Length - 1; i < poly.Length; j = i++)
         {
-            if (((polygon[i][1] > lat) != (polygon[j][1] > lat)) &&
-                (lon < (polygon[j][0] - polygon[i][0]) * (lat - polygon[i][1]) / (polygon[j][1] - polygon[i][1]) + polygon[i][0]))
-            {
-                inside = !inside;
-            }
+            bool intersect = (poly[i][1] > lat) != (poly[j][1] > lat) &&
+                             lon < (poly[j][0] - poly[i][0]) *
+                                   (lat - poly[i][1]) /
+                                   (poly[j][1] - poly[i][1]) + poly[i][0];
+            if (intersect) inside = !inside;
         }
         return inside;
     }
