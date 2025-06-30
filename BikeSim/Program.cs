@@ -397,11 +397,38 @@ class Program
         await UpdateBicycleStatus(bikeId, station.Location, "parked");
         await UpdateDockingStationStatus(stationId);
     }
+    
+    /* ================================================================== */
+    /* Park every bike before shutdown                                    */
+    /* ================================================================== */
+    static async Task ParkAllBicycles(List<string> bicycleIds)
+    {
+        Console.WriteLine("Parking all bicycles …");
+
+        foreach (var bikeId in bicycleIds)
+        {
+            if (bikeIsActive.GetValueOrDefault(bikeId))
+            {
+                // Prefer its planned destination, otherwise its current station
+                if (bikeDestinationStation.TryGetValue(bikeId, out var dest))
+                {
+                    await ParkBicycleAtStation(bikeId, dest);
+                }
+                else if (bikeCurrentStation.TryGetValue(bikeId, out var cur))
+                {
+                    await ParkBicycleAtStation(bikeId, cur);
+                }
+
+                bikeIsActive[bikeId] = false;
+                Console.WriteLine($"🅿️  Parked {bikeId}");
+            }
+        }
+    }
 
     static async Task RemoveBicycleFromStation(string bikeId, string stationId)
     {
         var station = dockingStations[stationId];
-        var sem     = stationLocks.GetOrAdd(stationId, _ => new SemaphoreSlim(1, 1));
+        var sem = stationLocks.GetOrAdd(stationId, _ => new SemaphoreSlim(1, 1));
 
         await sem.WaitAsync();
         try
