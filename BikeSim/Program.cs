@@ -729,7 +729,7 @@ class Program
             refVehicle = new
             {
                 type = "Property",
-                value = station.ParkedBicycles.ToArray()
+                value = station.ParkedBicycles.ToList()
             }
         };
 
