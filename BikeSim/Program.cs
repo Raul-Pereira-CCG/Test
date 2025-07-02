@@ -386,7 +386,7 @@ class Program
 
             double[] newPoint = route[currentPos];
             bikeLastPosition[bikeId] = newPoint;
-            string serviceStatus = "onRoute";
+            string serviceStatus = (currentPos == 0) ? "parked" : "onRoute";
 
             await UpdateBicycleStatus(bikeId, newPoint, serviceStatus);
             Console.WriteLine($"✅ {bikeId} -> {serviceStatus}, Location: {newPoint[1]}, {newPoint[0]}, Position: {currentPos + 1}/{routeLen}");
