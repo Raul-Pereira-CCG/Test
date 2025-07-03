@@ -1,92 +1,164 @@
 version: '3.8'
 
 services:
-
-  mongo-db:
+  mongo-db-2:
     image: mongo:4.2
-    hostname: mongo-db
-    container_name: db-mongo
+    hostname: mongo-db-2
+    container_name: db-mongo-2
     restart: unless-stopped
     environment:
       MONGO_INITDB_ROOT_USERNAME: admin
       MONGO_INITDB_ROOT_PASSWORD: strongpassword123
     volumes:
-      - mongo-data:/data/db
+      - mongo-data-2:/data/db
     expose:
-      - "27017"
+      - "27018"
     networks:
-      - bike4all
+      - bike4all-2
     command: --auth
 
-  orion:
+  orion-2:
     image: fiware/orion-ld:1.0.1
-    container_name: fiware-orion
+    container_name: fiware-orion-2
     depends_on:
-      - mongo-db
+      - mongo-db-2
     ports:
-      - "1026:1026"
-    command: -dbhost mongo-db -logLevel DEBUG -dbuser admin -dbpwd strongpassword123
+      - "1027:1026"
+    command: -dbhost mongo-db-2 -logLevel DEBUG -dbuser admin -dbpwd strongpassword123
     networks:
-      - bike4all
+      - bike4all-2
 
-  timescaledb:
+  timescaledb-2:
     image: timescale/timescaledb-ha:pg16
-    container_name: timescaledb
+    container_name: timescaledb-2
     environment:
       POSTGRES_DB: quantumleap
       POSTGRES_USER: quantumleap
       POSTGRES_PASSWORD: 12345
     ports:
-      - "5432:5432"
+      - "5433:5432"
     volumes:
-      - timescale-data:/var/lib/postgresql/data
+      - timescale-data-2:/var/lib/postgresql/data
     restart: unless-stopped
     networks:
-      - bike4all
+      - bike4all-2
 
-  quantumleap:
+  quantumleap-2:
     image: orchestracities/quantumleap:latest
-    container_name: quantumleap
+    container_name: quantumleap-2
     ports:
-      - "8668:8668"
+      - "8669:8668"
     environment:
-      - POSTGRES_HOST=timescaledb        
-      - POSTGRES_PORT=5432               
-      - POSTGRES_DB_NAME=quantumleap      
+      - POSTGRES_HOST=timescaledb-2
+      - POSTGRES_PORT=5432
+      - POSTGRES_DB_NAME=quantumleap
       - POSTGRES_DB_USER=quantumleap
-      - POSTGRES_DB_PASS=12345    
+      - POSTGRES_DB_PASS=12345
       - POSTGRES_USE_SSL=false
-      - QL_DEFAULT_DB=timescale 
+      - QL_DEFAULT_DB=timescale
     depends_on:
-      - timescaledb
+      - timescaledb-2
     restart: unless-stopped
     networks:
-      - bike4all
+      - bike4all-2
 
-  grafana:
+  grafana-2:
     image: grafana/grafana:latest
-    container_name: grafana
+    container_name: grafana-2
     ports:
-      - "9095:3000"
+      - "9096:3000"
     volumes:
-      - grafana_data:/var/lib/grafana
+      - grafana_data_2:/var/lib/grafana
     environment:
       - GF_SECURITY_ADMIN_USER=admin
       - GF_SECURITY_ADMIN_PASSWORD=admin
-      - GF_SERVER_ROOT_URL=http://localhost:9095
+      - GF_SERVER_ROOT_URL=http://localhost:9096
       - GF_SECURITY_ALLOW_EMBEDDING=true
       - GF_AUTH_ANONYMOUS_ENABLED=true
       - GF_AUTH_ANONYMOUS_ORG_ROLE=Viewer
       - GF_INSTALL_PLUGINS=yesoreyeram-boomtheme-panel
     restart: unless-stopped
     networks:
-      - bike4all
+      - bike4all-2
+
+  perseo-core-2:
+    image: fiware/perseo-core:latest
+    container_name: perseo-core-2
+    ports:
+      - "8081:8080"
+    environment:
+      - PERSEO_FE_URL=http://perseo-fe-2:9090
+    depends_on:
+      - mongo-db-2
+    networks:
+      - bike4all-2
+
+  perseo-fe-2:
+    image: fiware/perseo-fe:latest
+    container_name: perseo-fe-2
+    ports:
+      - "9091:9090"
+    depends_on:
+      - perseo-core-2
+    environment:
+      - PERSEO_MONGO_ENDPOINT=mongo-db-2
+      - PERSEO_MONGO_USER=admin
+      - PERSEO_MONGO_PASSWORD=strongpassword123
+      - PERSEO_MONGO_AUTH_SOURCE=admin
+      - PERSEO_CORE_URL=http://perseo-core-2:8080
+      - PERSEO_LOG_LEVEL=debug
+      - PERSEO_ORION_URL=http://orion-2:1026/
+      - PERSEO_SMTP_HOST=smtp.gmail.com
+      - PERSEO_SMTP_PORT=587
+      - PERSEO_SMTP_AUTH_USER=raulouyyyyyygameplays@gmail.com
+      - PERSEO_SMTP_AUTH_PASS=vwfi gsae pfpc xszr
+    networks:
+      - bike4all-2
+
+  postgres-db:
+    hostname: postgres-db
+    container_name: postgres-db
+    image: postgres:13
+    restart: always
+    ports:
+      - "5434:5432"
+    environment:
+      POSTGRES_USER: postgres
+      POSTGRES_DB: postgres
+      POSTGRES_PASSWORD: example
+      POSTGRES_HOST_AUTH_METHOD: md5
+    command: postgres -c password_encryption=md5
+    networks:
+      - bike4all-2
+    
+  cygnus-ld:
+    hostname: cygnus-ld
+    container_name: cygnus-ld
+    image: fiware/cygnus-ld
+    environment:
+      CYGNUS_POSTGRESQL_HOST: postgres-db
+      CYGNUS_POSTGRESQL_PASS: example
+      CYGNUS_POSTGRESQL_USER: postgres
+    ports: 
+      - "5050:5050"
+    networks:
+      - bike4all-2
+
+  orionapidotnet:
+    build: ./BIKE_API
+    ports:
+      - "5000:5000"
+    environment:
+      - DOTNET_RUNNING_IN_CONTAINER=true
+      - ASPNETCORE_URLS=http://0.0.0.0:5000
+    networks:
+      - bike4all-2
 
 networks:
-  bike4all:
+  bike4all-2:
     driver: bridge
 
 volumes:
-  timescale-data:
-  mongo-data:
-  grafana_data:
+  timescale-data-2:
+  mongo-data-2:
+  grafana_data_2:

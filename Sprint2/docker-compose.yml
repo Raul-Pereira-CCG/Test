@@ -115,6 +115,45 @@ services:
     networks:
       - bike4all-2
 
+  postgres-db:
+    hostname: postgres-db
+    container_name: postgres-db
+    image: postgres:13
+    restart: always
+    ports:
+      - "5434:5432"
+    environment:
+      POSTGRES_USER: postgres
+      POSTGRES_DB: postgres
+      POSTGRES_PASSWORD: example
+      POSTGRES_HOST_AUTH_METHOD: md5
+    command: postgres -c password_encryption=md5
+    networks:
+      - bike4all-2
+    
+  cygnus-ld:
+    hostname: cygnus-ld
+    container_name: cygnus-ld
+    image: fiware/cygnus-ld
+    environment:
+      CYGNUS_POSTGRESQL_HOST: postgres-db
+      CYGNUS_POSTGRESQL_PASS: example
+      CYGNUS_POSTGRESQL_USER: postgres
+    ports: 
+      - "5050:5050"
+    networks:
+      - bike4all-2
+
+  orionapidotnet:
+    build: ./BIKE_API
+    ports:
+      - "5000:5000"
+    environment:
+      - DOTNET_RUNNING_IN_CONTAINER=true
+      - ASPNETCORE_URLS=http://0.0.0.0:5000
+    networks:
+      - bike4all-2
+
 networks:
   bike4all-2:
     driver: bridge
