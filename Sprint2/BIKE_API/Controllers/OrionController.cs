@@ -136,7 +136,7 @@ public async Task<IActionResult> DeleteEntity(string id)
     // 4. Se for InventoryItem, apagar tabela associada no PostgreSQL
     if (isInventoryItem && tableName != null)
     {
-        var connString = "Host=postgres-db;Port=5434;Username=postgres;Password=example;Database=postgres";
+        var connString = "Host=57.128.119.16;Port=5434;Username=postgres;Password=example;Database=postgres";
 
         try
         {
