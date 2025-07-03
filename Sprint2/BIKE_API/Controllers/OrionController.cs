@@ -9,7 +9,7 @@ namespace OrionApiDotNet.Controllers;
 public class OrionController : ControllerBase
 {
     private readonly HttpClient _httpClient;
-    private const string OrionUrl = "http://fiware-orion-2:1027/ngsi-ld/v1/entities";
+    private const string OrionUrl = "http://57.128.119.16:1027/ngsi-ld/v1/entities";
 
     public OrionController()
     {
