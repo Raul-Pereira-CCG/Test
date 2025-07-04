@@ -48,8 +48,8 @@ class Program
         public int OutOfServiceSlots { get; set; }
         public List<string> ParkedBicycles { get; set; } = new List<string>();
 
-        public int AvailableBikes => ParkedBicycles.Count;
-        public int FreeSlots => TotalSlots - OutOfServiceSlots - ParkedBicycles.Count;
+        public int AvailableBikes => ParkedBicycles.Count(id => !string.IsNullOrEmpty(id));
+        public int FreeSlots => TotalSlots - OutOfServiceSlots - AvailableBikes;
         public bool HasAvailableSlots => FreeSlots > 0;
         public bool HasAvailableBikes => ParkedBicycles.Count > 0;
     }
@@ -134,7 +134,9 @@ class Program
                         {
                             foreach (JsonElement vehicle in valueElement.EnumerateArray())
                             {
-                                parkedBicycles.Add(vehicle.GetString());
+                                string v = vehicle.GetString();
+                                if (!string.IsNullOrWhiteSpace(v))
+                                    parkedBicycles.Add(v);
                             }
                         }
                     }
@@ -891,11 +893,15 @@ class Program
     
     static string[] BuildRefVehicleArray(DockingStation st)
     {
-        return st.ParkedBicycles.Count switch
+        var bikes = st.ParkedBicycles
+                    .Where(id => !string.IsNullOrEmpty(id))
+                    .ToArray();
+
+        return bikes.Length switch
         {
-            0 => Array.Empty<string>(),                    
-            1 => new[] { "", st.ParkedBicycles[0] },       
-            _ => st.ParkedBicycles.ToArray()               
+            0 => Array.Empty<string>(),       
+            1 => new[] { "", bikes[0] },          
+            _ => bikes                                
         };
     }
 
