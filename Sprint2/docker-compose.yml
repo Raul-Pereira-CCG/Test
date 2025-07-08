@@ -151,10 +151,10 @@ services:
     container_name: inventory-api
     build: ./BIKE_API
     ports:
-      - "5000:5000"
+      - "5001:5001"
     environment:
       - DOTNET_RUNNING_IN_CONTAINER=true
-      - ASPNETCORE_URLS=http://0.0.0.0:5000
+      - ASPNETCORE_URLS=http://0.0.0.0:5001
     networks:
       - bike4all-2
 
