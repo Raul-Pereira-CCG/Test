@@ -1,0 +1,184 @@
+version: '3.8'
+
+services:
+  mongo-db:
+    image: mongo:4.2
+    hostname: mongo-db
+    container_name: db-mongo
+    restart: unless-stopped
+    environment:
+      MONGO_INITDB_ROOT_USERNAME: admin
+      MONGO_INITDB_ROOT_PASSWORD: strongpassword123
+    volumes:
+      - mongo-data:/data/db
+    expose:
+      - "27017"
+    networks:
+      - bike4all
+    command: --auth
+
+  orion:
+    image: fiware/orion-ld:1.0.1
+    container_name: fiware-orion
+    depends_on:
+      - mongo-db
+    ports:
+      - "1026:1026"
+    command: -dbhost mongo-db -logLevel DEBUG -dbuser admin -dbpwd strongpassword123
+    networks:
+      - bike4all
+
+  timescaledb:
+    image: timescale/timescaledb-ha:pg16
+    container_name: timescaledb
+    environment:
+      POSTGRES_DB: quantumleap
+      POSTGRES_USER: quantumleap
+      POSTGRES_PASSWORD: 12345
+    ports:
+      - "5432:5432"
+    volumes:
+      - timescale-data:/var/lib/postgresql/data
+    restart: unless-stopped
+    networks:
+      - bike4all
+
+  quantumleap:
+    image: orchestracities/quantumleap:latest
+    container_name: quantumleap
+    ports:
+      - "8668:8668"
+    environment:
+      - POSTGRES_HOST=timescaledb
+      - POSTGRES_PORT=5432
+      - POSTGRES_DB_NAME=quantumleap
+      - POSTGRES_DB_USER=quantumleap
+      - POSTGRES_DB_PASS=12345
+      - POSTGRES_USE_SSL=false
+      - QL_DEFAULT_DB=timescale
+    depends_on:
+      - timescaledb
+    restart: unless-stopped
+    networks:
+      - bike4all
+
+  grafana:
+    image: grafana/grafana:latest
+    container_name: grafana
+    ports:
+      - "9095:3000"
+    volumes:
+      - grafana_data:/var/lib/grafana
+    environment:
+      - GF_SECURITY_ADMIN_USER=admin
+      - GF_SECURITY_ADMIN_PASSWORD=admin
+      - GF_SERVER_ROOT_URL=http://localhost:9095
+      - GF_SECURITY_ALLOW_EMBEDDING=true
+      - GF_AUTH_ANONYMOUS_ENABLED=true
+      - GF_AUTH_ANONYMOUS_ORG_ROLE=Viewer
+    restart: unless-stopped
+    networks:
+      - bike4all
+
+  perseo-core:
+    image: fiware/perseo-core:latest
+    container_name: perseo-core
+    ports:
+      - "8080:8080"
+    environment:
+      - PERSEO_FE_URL=http://perseo-fe:9090
+    depends_on:
+      - mongo-db
+    networks:
+      - bike4all
+
+  perseo-fe:
+    image: fiware/perseo-fe:latest
+    container_name: perseo-fe
+    ports:
+      - "9090:9090"
+    depends_on:
+      - perseo-core
+    environment:
+      - PERSEO_MONGO_ENDPOINT=mongo-db
+      - PERSEO_MONGO_USER=admin
+      - PERSEO_MONGO_PASSWORD=strongpassword123
+      - PERSEO_MONGO_AUTH_SOURCE=admin
+      - PERSEO_CORE_URL=http://perseo-core:8080
+      - PERSEO_LOG_LEVEL=debug
+      - PERSEO_ORION_URL=http://orion:1026/
+      - PERSEO_SMTP_HOST=smtp.gmail.com
+      - PERSEO_SMTP_PORT=587
+      - PERSEO_SMTP_AUTH_USER=raulouyyyyyygameplays@gmail.com
+      - PERSEO_SMTP_AUTH_PASS=vwfi gsae pfpc xszr
+    networks:
+      - bike4all
+
+  loki:
+    image: grafana/loki:3.4.1
+    container_name: loki
+    command: -config.file=/etc/loki/loki-config.yaml
+    volumes:
+      - C:/Users/raulj/OneDrive/Documentos/GitHub/Bike4ALL/Sprint3:/etc/loki
+    ports: 
+      - "3100:3100"
+    networks: 
+      - bike4all
+
+  promtail:
+    image: grafana/promtail:3.4.1
+    container_name: promtail
+    command: -config.file=/etc/promtail/promtail-config.yaml
+    volumes:
+      - C:/Users/raulj/OneDrive/Documentos/GitHub/Bike4ALL/Sprint3:/etc/promtail
+      - /var/lib/docker/containers:/var/lib/docker/containers:ro
+      - /var/run/docker.sock:/var/run/docker.sock:ro
+    depends_on:
+      - loki
+    networks: 
+      - bike4all
+  
+  prometheus:
+    image: prom/prometheus:v2.52.0
+    container_name: prometheus
+    command: '--config.file=/etc/prometheus/prometheus.yml'
+    volumes:
+      - C:/Users/raulj/OneDrive/Documentos/GitHub/Bike4ALL/Sprint3:/etc/prometheus
+    ports:
+      - "7070:7070"
+    networks: 
+      - bike4all
+    restart: unless-stopped
+
+  node-exporter:
+    image: prom/node-exporter:v1.8.1
+    container_name: node-exporter
+    pid: host
+    ports:
+      - "9100:9100"
+    networks: 
+      - bike4all
+    restart: unless-stopped
+
+  cadvisor:
+    image: gcr.io/cadvisor/cadvisor:v0.47.2
+    container_name: cadvisor
+    volumes:
+      - /:/rootfs:ro
+      - /var/run:/var/run:ro
+      - /sys:/sys:ro
+      - /var/lib/docker/:/var/lib/docker:ro
+    ports:
+      - "6060:6060"
+    networks: 
+      - bike4all
+    restart: unless-stopped
+
+networks:
+  bike4all:
+    driver: bridge
+
+volumes:
+  timescale-data:
+  mongo-data:
+  grafana_data:

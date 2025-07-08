@@ -1,6 +1,8 @@
 using Microsoft.AspNetCore.Mvc;
 using System.Net.Http.Headers;
+using System.Text.Json;
 using Npgsql;
+using Microsoft.Extensions.Configuration;
 
 namespace OrionApiDotNet.Controllers;
 
@@ -9,11 +11,15 @@ namespace OrionApiDotNet.Controllers;
 public class OrionController : ControllerBase
 {
     private readonly HttpClient _httpClient;
-    private const string OrionUrl = "http://57.128.119.16:1027/ngsi-ld/v1/entities";
+    private readonly string _orionUrl;
+    private readonly string _cygnusNotifyUrl;
 
-    public OrionController()
+    public OrionController(IConfiguration configuration)
     {
         _httpClient = new HttpClient();
+
+        _orionUrl = configuration["OrionSettings:OrionUrl"];
+        _cygnusNotifyUrl = configuration["OrionSettings:CygnusNotifyUrl"];
     }
 
     [HttpPost("entity")]
@@ -22,7 +28,7 @@ public class OrionController : ControllerBase
         using var reader = new StreamReader(Request.Body);
         var rawBody = await reader.ReadToEndAsync();
 
-        var request = new HttpRequestMessage(HttpMethod.Post, OrionUrl);
+        var request = new HttpRequestMessage(HttpMethod.Post, _orionUrl);
         request.Content = new StringContent(rawBody);
         request.Content.Headers.ContentType = new MediaTypeHeaderValue("application/ld+json");
 
@@ -37,7 +43,7 @@ public class OrionController : ControllerBase
     [HttpGet("entity/{id}")]
     public async Task<IActionResult> GetEntity(string id)
     {
-        var response = await _httpClient.GetAsync($"{OrionUrl}/{id}");
+        var response = await _httpClient.GetAsync($"{_orionUrl}/{id}");
         var content = await response.Content.ReadAsStringAsync();
         if (response.IsSuccessStatusCode)
             return Content(content, "application/ld+json");
@@ -47,22 +53,20 @@ public class OrionController : ControllerBase
     [HttpGet("entity")]
     public async Task<IActionResult> GetAllEntities()
     {
-    // Recolher todos os parâmetros da query string
-    var queryString = Request.QueryString.HasValue ? Request.QueryString.Value : "";
-    var url = OrionUrl + queryString;
+        var queryString = Request.QueryString.HasValue ? Request.QueryString.Value : "";
+        var url = _orionUrl + queryString;
 
-    var request = new HttpRequestMessage(HttpMethod.Get, url);
-    request.Headers.Accept.Add(new System.Net.Http.Headers.MediaTypeWithQualityHeaderValue("application/ld+json"));
+        var request = new HttpRequestMessage(HttpMethod.Get, url);
+        request.Headers.Accept.Add(new MediaTypeWithQualityHeaderValue("application/ld+json"));
 
-    var response = await _httpClient.SendAsync(request);
-    var content = await response.Content.ReadAsStringAsync();
+        var response = await _httpClient.SendAsync(request);
+        var content = await response.Content.ReadAsStringAsync();
 
-    if (response.IsSuccessStatusCode)
-        return Content(content, "application/ld+json");
+        if (response.IsSuccessStatusCode)
+            return Content(content, "application/ld+json");
 
-    return StatusCode((int)response.StatusCode, $"Orion Error: {content}");
+        return StatusCode((int)response.StatusCode, $"Orion Error: {content}");
     }
-
 
     [HttpPatch("entity/{id}")]
     public async Task<IActionResult> PatchEntity(string id)
@@ -70,7 +74,7 @@ public class OrionController : ControllerBase
         using var reader = new StreamReader(Request.Body);
         var rawBody = await reader.ReadToEndAsync();
 
-        var request = new HttpRequestMessage(HttpMethod.Patch, $"{OrionUrl}/{id}/attrs");
+        var request = new HttpRequestMessage(HttpMethod.Patch, $"{_orionUrl}/{id}/attrs");
         request.Content = new StringContent(rawBody);
         request.Content.Headers.ContentType = new MediaTypeHeaderValue("application/ld+json");
 
@@ -82,79 +86,43 @@ public class OrionController : ControllerBase
         return BadRequest($"Orion Error: {responseContent}");
     }
 
-    
-[HttpDelete("entity/{id}")]
-public async Task<IActionResult> DeleteEntity(string id)
-{
-    // 1. Buscar a entidade no Orion para garantir que existe
-    var getResponse = await _httpClient.GetAsync($"{OrionUrl}/{id}");
-    if (!getResponse.IsSuccessStatusCode)
-        return NotFound($"Entity {id} not found in Orion.");
-
-    var entityJson = await getResponse.Content.ReadAsStringAsync();
-
-    // 2. Verificar o tipo da entidade
-    string entityType = null;
-    using (var doc = System.Text.Json.JsonDocument.Parse(entityJson))
+    [HttpDelete("entity/{id}")]
+    public async Task<IActionResult> DeleteEntity(string id)
     {
-        if (doc.RootElement.TryGetProperty("type", out var typeElement))
+        var getResp = await _httpClient.GetAsync($"{_orionUrl}/{id}");
+        if (!getResp.IsSuccessStatusCode)
+            return NotFound($"Entity {id} not found in Orion.");
+
+        var entityJson = await getResp.Content.ReadAsStringAsync();
+        using var doc = JsonDocument.Parse(entityJson);
+        if (!doc.RootElement.TryGetProperty("type", out var typeElement))
+            return BadRequest("Could not determine entity type.");
+
+        var entityType = typeElement.GetString();
+
+        var patchBody = new
         {
-            entityType = typeElement.GetString();
+            status = new { type = "Property", value = "deleted" }
+        };
+        var patchContent = new StringContent(JsonSerializer.Serialize(patchBody));
+        patchContent.Headers.ContentType = new MediaTypeHeaderValue("application/json");
+
+        var patchResp = await _httpClient.PatchAsync($"{_orionUrl}/{id}/attrs", patchContent);
+        if (!patchResp.IsSuccessStatusCode)
+        {
+            var err = await patchResp.Content.ReadAsStringAsync();
+            return StatusCode((int)patchResp.StatusCode, $"Failed to patch status: {err}");
         }
+
+        await Task.Delay(500);
+
+        var deleteResp = await _httpClient.DeleteAsync($"{_orionUrl}/{id}");
+        if (!deleteResp.IsSuccessStatusCode)
+        {
+            var msg = await deleteResp.Content.ReadAsStringAsync();
+            return StatusCode((int)deleteResp.StatusCode, $"Orion Error: {msg}");
+        }
+
+        return Ok("Entity status set to deleted and entity removed from Orion.");
     }
-
-    if (string.IsNullOrWhiteSpace(entityType))
-        return BadRequest("Could not determine entity type.");
-
-    // Só tentar apagar a tabela se for InventoryItem
-    bool isInventoryItem = entityType.EndsWith("InventoryItem"); // para suportar URLs longas também
-    string tableName = null;
-
-    if (isInventoryItem)
-    {
-        // Extrair sufixo da entidade para nome da tabela (ex: "part6")
-        string GetTableSuffixFromId(string entityId)
-        {
-            var parts = entityId.Split(':');
-            return parts.Length > 3 ? parts[3].ToLower() : null;
-        }
-
-        var suffix = GetTableSuffixFromId(id);
-        if (suffix == null)
-            return BadRequest("Entity id format invalid to extract table suffix.");
-
-        tableName = $"def_serv_ld.urn_ngsi_ld_inventoryitem_{suffix}";
-    }
-
-    // 3. Apagar a entidade no Orion
-    var deleteResponse = await _httpClient.DeleteAsync($"{OrionUrl}/{id}");
-    var deleteContent = await deleteResponse.Content.ReadAsStringAsync();
-
-    if (!deleteResponse.IsSuccessStatusCode)
-        return NotFound($"Orion Error: {deleteContent}");
-
-    // 4. Se for InventoryItem, apagar tabela associada no PostgreSQL
-    if (isInventoryItem && tableName != null)
-    {
-        var connString = "Host=57.128.119.16;Port=5434;Username=postgres;Password=example;Database=postgres";
-
-        try
-        {
-            await using var conn = new NpgsqlConnection(connString);
-            await conn.OpenAsync();
-
-            var dropCmd = new NpgsqlCommand($"DROP TABLE IF EXISTS {tableName}", conn);
-            await dropCmd.ExecuteNonQueryAsync();
-        }
-        catch (Exception ex)
-        {
-            var errorMsg = $"Error dropping table in PostgreSQL: {ex.Message}";
-            Console.Error.WriteLine(errorMsg);
-            return StatusCode(500, errorMsg);
-        }
-    }
-
-    return Ok($"Entity deleted from Orion{(isInventoryItem ? $" and table {tableName} dropped from PostgreSQL" : "")}.");
-}
-
 }
