@@ -145,7 +145,7 @@ services:
     volumes:
       - C:/Users/raulj/OneDrive/Documentos/GitHub/Bike4ALL/Sprint3:/etc/prometheus
     ports:
-      - "7070:7070"
+      - "7070:9090"
     networks: 
       - bike4all
     restart: unless-stopped
@@ -169,7 +169,7 @@ services:
       - /sys:/sys:ro
       - /var/lib/docker/:/var/lib/docker:ro
     ports:
-      - "6060:6060"
+      - "6060:8080"
     networks: 
       - bike4all
     restart: unless-stopped
