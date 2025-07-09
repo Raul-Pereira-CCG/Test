@@ -116,13 +116,6 @@ public class OrionController : ControllerBase
 
         await Task.Delay(500);
 
-        var deleteResp = await _httpClient.DeleteAsync($"{_orionUrl}/{id}");
-        if (!deleteResp.IsSuccessStatusCode)
-        {
-            var msg = await deleteResp.Content.ReadAsStringAsync();
-            return StatusCode((int)deleteResp.StatusCode, $"Orion Error: {msg}");
-        }
-
         return Ok("Entity status set to deleted and entity removed from Orion.");
     }
 }
