@@ -1,7 +1,7 @@
 version: '3.8'
 
 services:
-  perseo-core:
+  perseo-core-2:
     image: fiware/perseo-core:latest
     container_name: perseo-core-2
     ports:
@@ -11,7 +11,7 @@ services:
     networks:
       - bike4all-2
 
-  perseo-fe:
+  perseo-fe-2:
     image: fiware/perseo-fe:latest
     container_name: perseo-fe-2
     ports:
