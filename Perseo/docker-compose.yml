@@ -1,22 +1,6 @@
 version: '3.8'
 
 services:
-  mongo-db-2:
-    image: mongo:4.2
-    hostname: mongo-db-2
-    container_name: db-mongo-2
-    restart: unless-stopped
-    environment:
-      MONGO_INITDB_ROOT_USERNAME: admin
-      MONGO_INITDB_ROOT_PASSWORD: strongpassword123
-    volumes:
-      - mongo-data-2:/data/db
-    expose:
-      - "27018"
-    networks:
-      - bike4all-2
-    command: --auth
-
   perseo-core-2:
     image: fiware/perseo-core:latest
     container_name: perseo-core-2
