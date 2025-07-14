@@ -8,8 +8,6 @@ services:
       - "8081:8080"
     environment:
       - PERSEO_FE_URL=http://perseo-fe-2:9091
-    depends_on:
-      - mongo-db-2
     networks:
       - bike4all-2
 
