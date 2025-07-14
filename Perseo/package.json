@@ -1,0 +1,12 @@
+{
+  "name": "rabbitmq-gateway",
+  "version": "1.0.0",
+  "main": "rabbitmq-gateway.js",
+  "scripts": {
+    "start": "node rabbitmq-gateway.js"
+  },
+  "dependencies": {
+    "amqplib": "^0.10.3",
+    "express": "^4.18.2"
+  }
+}
