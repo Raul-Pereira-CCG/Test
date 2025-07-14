@@ -46,7 +46,7 @@ services:
 
   rabbitmq-gateway:
     build:
-      context: C:/Users/raulj/OneDrive/Documentos/GitHub/Bike4ALL/Perseo
+      context: /home/raulp/Test/Perseo
     container_name: rabbitmq-gateway
     environment:
       - RABBITMQ_URL=amqp://guest:guest@rabbitmq:5672
