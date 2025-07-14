@@ -1,38 +1,6 @@
 version: '3.8'
 
 services:
-  perseo-core-2:
-    image: fiware/perseo-core:latest
-    container_name: perseo-core-2
-    ports:
-      - "8081:8080"
-    environment:
-      - PERSEO_FE_URL=http://perseo-fe-2:9091
-    networks:
-      - bike4all-2
-
-  perseo-fe-2:
-    image: fiware/perseo-fe:latest
-    container_name: perseo-fe-2
-    ports:
-      - "9091:9090"
-    depends_on:
-      - perseo-core-2
-    environment:
-      - PERSEO_MONGO_ENDPOINT=db-mongo-2
-      - PERSEO_MONGO_USER=admin
-      - PERSEO_MONGO_PASSWORD=strongpassword123
-      - PERSEO_MONGO_AUTH_SOURCE=admin
-      - PERSEO_CORE_URL=http://perseo-core-2:8081
-      - PERSEO_LOG_LEVEL=debug
-      - PERSEO_ORION_URL=http://fiware-orion-2:1027/
-      - PERSEO_SMTP_HOST=smtp.gmail.com
-      - PERSEO_SMTP_PORT=587
-      - PERSEO_SMTP_AUTH_USER=raulouyyyyyygameplays@gmail.com
-      - PERSEO_SMTP_AUTH_PASS=vwfi gsae pfpc xszr
-    networks:
-      - bike4all-2
-
   rabbitmq:
     image: rabbitmq:3-management
     ports:
@@ -61,6 +29,3 @@ services:
 networks:
   bike4all-2:
     driver: bridge
-  
-volumes:
-  mongo-data-2:
