@@ -19,7 +19,7 @@ services:
     depends_on:
       - perseo-core-2
     environment:
-      - PERSEO_MONGO_ENDPOINT=mongo-db-2
+      - PERSEO_MONGO_ENDPOINT=db-mongo-2
       - PERSEO_MONGO_USER=admin
       - PERSEO_MONGO_PASSWORD=strongpassword123
       - PERSEO_MONGO_AUTH_SOURCE=admin
