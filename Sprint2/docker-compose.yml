@@ -169,7 +169,7 @@ services:
     container_name: loki
     command: -config.file=/etc/loki/loki-config.yaml
     volumes:
-      - /home/raulp/Test/Sprint2:/etc/loki
+      - C:/Users/raulj/OneDrive/Documentos/GitHub/Bike4ALL/Sprint2:/etc/loki
     ports: 
       - "3100:3100"
     networks: 
@@ -180,49 +180,13 @@ services:
     container_name: promtail
     command: -config.file=/etc/promtail/promtail-config.yaml
     volumes:
-      - /home/raulp/Test/Sprint2:/etc/promtail
+      - C:/Users/raulj/OneDrive/Documentos/GitHub/Bike4ALL/Sprint2:/etc/promtail
       - /var/lib/docker/containers:/var/lib/docker/containers:ro
       - /var/run/docker.sock:/var/run/docker.sock:ro
     depends_on:
       - loki
     networks: 
       - bike4all-2
-  
-  prometheus:
-    image: prom/prometheus:v2.52.0
-    container_name: prometheus
-    command: '--config.file=/etc/prometheus/prometheus.yml'
-    volumes:
-      - /home/raulp/Test/Sprint2:/etc/prometheus
-    ports:
-      - "7070:9090"
-    networks: 
-      - bike4all-2
-    restart: unless-stopped
-
-  node-exporter:
-    image: prom/node-exporter:v1.8.1
-    container_name: node-exporter
-    pid: host
-    ports:
-      - "9100:9100"
-    networks: 
-      - bike4all-2
-    restart: unless-stopped
-
-  cadvisor:
-    image: gcr.io/cadvisor/cadvisor:v0.47.2
-    container_name: cadvisor
-    volumes:
-      - /:/rootfs:ro
-      - /var/run:/var/run:ro
-      - /sys:/sys:ro
-      - /var/lib/docker/:/var/lib/docker:ro
-    ports:
-      - "6060:8080"
-    networks: 
-      - bike4all-2
-    restart: unless-stopped
 
 networks:
   bike4all-2:

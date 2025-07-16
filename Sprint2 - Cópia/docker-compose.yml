@@ -1,0 +1,30 @@
+#version: '3.8'
+
+services:
+  dbb4ampsystemlogs:
+    image: grafana/loki:3.4.1
+    container_name: dbb4ampsystemlogs
+    command: -config.file=/etc/dbb4ampsystemlogs/dbb4ampsystemlogs-config.yaml
+    volumes:
+      - /home/shareduser/be.neutral/b4am.systemlogs:/etc/dbb4ampsystemlogs
+    expose: 
+      - "3100"
+    networks: 
+      - shared_net_wagw
+
+  srvb4ampsystemlogs:
+    image: grafana/promtail:3.4.1
+    container_name: srvb4ampsystemlogs
+    command: -config.file=/etc/srvb4ampsystemlogs/srvb4ampsystemlogs-config.yaml
+    volumes:
+      - /home/shareduser/be.neutral/b4am.systemlogs:/etc/srvb4ampsystemlogs
+      - /var/lib/docker/containers:/var/lib/docker/containers:ro
+      - /var/run/docker.sock:/var/run/docker.sock:ro
+    depends_on:
+      - dbb4ampsystemlogs
+    networks: 
+      - shared_net_wagw
+
+networks:
+  shared_net_wagw:
+    external: true

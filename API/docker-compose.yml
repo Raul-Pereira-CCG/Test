@@ -2,15 +2,17 @@ version: '3.8'
 
 services:  
   orionapidotnet:
-    build: ./BIKE_API_Docker
+    container_name: api-inventory
+    build: ./BIKE_API
     ports:
-      - "5000:5000"
+      - "7007:7007"
     environment:
-      - DOTNET_RUNNINGINCONTAINER=true
+      - DOTNET_RUNNING_IN_CONTAINER=true
+      - ASPNETCORE_URLS=http://0.0.0.0:7007
     networks:
-      - bike4all
+      - bike4all-2
  
 networks:
-  bike4all:
+  bike4all-2:
     driver: bridge
 
